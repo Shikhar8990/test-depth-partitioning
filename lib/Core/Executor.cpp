@@ -426,9 +426,11 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
       processTree(0), replayKTest(0), replayPath(0), usingSeeds(0),
       atMemoryLimit(false), inhibitForking(false), haltExecution(false),
       ivcEnabled(false), debugLogBuffer(debugBufferString),
-      enableBranchHalt(false),offloadDynamicPolicy(false),
+      enableBranchHalt(false),
       waiting4OffloadReq(false), enableRanging(false), searchMode("BFS"), 
       treepathFile("pathFile") {
+
+  errPair.second = -1;
 
   const time::Span maxCoreSolverTime(MaxCoreSolverTime);
   maxInstructionTime = time::Span(MaxInstructionTime);
@@ -3681,9 +3683,11 @@ void Executor::terminateStateOnError(ExecutionState &state,
     
   terminateState(state);
 
-  if (shouldExitOn(termReason)) {
-    haltExecution = true;
-    MPI_Abort(MPI_COMM_WORLD, -1);
+  if(shouldExitOn(termReason)) {
+    if(errPair.second == -1) {
+      haltExecution = true;
+      MPI_Abort(MPI_COMM_WORLD, -1);
+    }
   }
 }
 

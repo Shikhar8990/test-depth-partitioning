@@ -156,7 +156,7 @@ public:
   virtual void setLogFile(std::string inLogFile) = 0;
   virtual void setErrorFile(std::string inErrorFile) = 0;
   virtual void setRangeCheckMode(unsigned int modeId);
-  virtual void setDynamicOffloadPolicy() = 0 ;
+  virtual void setErrorPair(std::pair <std::string, unsigned int> inErrPair) = 0;
 
   /*** Runtime options ***/
 

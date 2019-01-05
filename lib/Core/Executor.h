@@ -224,9 +224,6 @@ private:
   /// enable branch level halt
   bool enableBranchHalt;
   
-  /// dynamic policy
-  bool offloadDynamicPolicy;
-  
   /// search mode
   std::string searchMode;
   
@@ -296,8 +293,9 @@ private:
   std::vector<unsigned char> upperBound;
   std::vector<unsigned char> lowerBound;
   std::vector<unsigned char> lastTestPath;
-  
 
+  std::pair<std::string, unsigned int> errPair;
+  
   /// Maximum time to allow for a single instruction.
   time::Span maxInstructionTime;
 
@@ -622,6 +620,10 @@ public:
     usingSeeds = seeds;
   }
 
+  virtual void setErrorPair(std::pair <std::string, unsigned int> inerrPair) {
+    errPair = inerrPair;
+  }
+
   virtual void setUpperBound(std::vector<unsigned char> path);
 	virtual void setLowerBound(std::vector<unsigned char> path);
 	virtual void enableRangeChecking() {
@@ -641,10 +643,6 @@ public:
 
 	virtual void setRangeCheckMode(unsigned int modeId) {
 		rangeCheckMode = modeId;
-	}
-
-	virtual void setDynamicOffloadPolicy() {
-		offloadDynamicPolicy = true;
 	}
 
 	virtual void setPathFile(std::string inPathFile) {

@@ -104,7 +104,8 @@ namespace {
 
   cl::opt<std::string>
   ErrorLocation("error-location",
-        cl::desc("locations a failure is expected (e.g. <file1>[:line],<file2>[:line],..)"));
+        cl::desc("locations a failure is expected (e.g. <file1>[:line],<file2>[:line],..)"),
+        cl::init("none"));
 
   cl::opt<std::string>
   errorFile("error-file",
@@ -1167,8 +1168,29 @@ linkWithUclibc(StringRef libDir,
   createLibCWrapper(modules, EntryPoint, "__uClibc_main");
   klee_message("NOTE: Using klee-uclibc : %s", uclibcBCA.c_str());
 }
-
 #endif
+
+bool parseNameLineOption(
+    std::string option,
+    std::string &fname,
+    unsigned int &line) {
+    std::istringstream stream(option);
+    std::string token;
+    char *endptr;
+
+    if (std::getline(stream, token, ':')) {
+        fname = token;
+        while (std::getline(stream, token, '/')) {
+            /* TODO: handle errors */
+            const char *s = token.c_str();
+            line = strtol(s, &endptr, 10);
+            if ((errno == ERANGE) || (endptr == s) || (*endptr != '\0')) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
 
 int launchKleeInstance(int x, int argc, char **argv, char **envp,
                         std::deque<std::deque<unsigned char>> &workList,
@@ -1349,7 +1371,9 @@ void master(int argc, char **argv, char **envp) {
   int currRank = 2;
   auto wListIt = workList.begin();
   while(wListIt != workList.end()) {
-    if(currRank == num_cores) break;
+    if(currRank == num_cores) {
+      klee_error("No workers available!!");
+    }
     std::cout << "Starting worker: "<<currRank<<"\n";
     masterLog << "MASTER->WORKER: START_WORK ID:"<<currRank<<"\n";
     //recTime = time(NULL);
@@ -1750,6 +1774,7 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
   	klee_error("Entry function '%s' not found in module.", EntryPoint.c_str());
 	}
 
+
 	externalsAndGlobalsCheck(finalModule);
 
 
@@ -1857,10 +1882,6 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
       interpreter->setExplorationDepth(explorationDepth);
     }
 
-    if(offloadPolicy == "DYNAMIC") {
-      interpreter->setDynamicOffloadPolicy();
-    }
-
     if(mode == PREFIX_MODE) {
       interpreter->setUpperBound(prefix);
       interpreter->setLowerBound(prefix);
@@ -1885,6 +1906,17 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
       interpreter->setLowerBound(loBound);
       interpreter->setRangeCheckMode(CLOSE_CLOSE);
       interpreter->enableRangeChecking();
+    }
+
+    if(ErrorLocation != "none") {
+      std::string fname;
+      unsigned int line;
+      if(parseNameLineOption(ErrorLocation, fname, line)) {
+        interpreter->setErrorPair(std::make_pair(fname, line));
+        std::cout << "HAHA: "<<fname<<line<<std::endl;
+      } else {
+        klee_error("INVALID Error Location Arguments");
+      }
     }
 
     interpreter->setSearchMode(searchMode);
