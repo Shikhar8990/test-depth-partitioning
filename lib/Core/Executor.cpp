@@ -98,6 +98,7 @@
 #define OFFLOAD 4
 #define CHECK_CONTINUE 5
 #define OFFLOAD_RESP 6
+#define BUG_FOUND 8
 
 #define PREFIX_MODE 101
 #define RANGE_MODE 102
@@ -3398,7 +3399,6 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
       for (auto it = states.begin(); it != states.end(); ++it) {
         std::vector<unsigned char> pathTillNow;
         pathWriter->readStream(getPathStreamID(**it), pathTillNow);
-				//std::cout << "huhu "<<pathTillNow.size()<<"\n";
         if(pathTillNow.size() < branchLevel2Halt) {
           haltDuetoBranchLevel = false;
           break;
@@ -3408,17 +3408,32 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
         haltExecution = true;
       }
     }
-  }
-
+		
+    //another method where master generates states equal to the
+    //number of workers which, just a hack the depth parm in this
+    //case will be the number of workers
+    //if(enableBranchHalt) {
+    //  if(states.size() == branchLevel2Halt) {
+    //    haltExecution = true;
+    //  }
+    //}
+	}
+    
 	//here empty out all the states into the worklist
-  if(enableBranchHalt) {
+	if(enableBranchHalt) {
+  	for(auto it = states.begin(); it != states.end(); ++it) {
+    	if((*it)->depth == branchLevel2Halt) {
+     		addState2WorkList(**it);
+   		}
+ 		}		
+	}
+	 
+  /*if(enableBranchHalt) {
     for(auto it = states.begin(); it != states.end(); ++it) {
-      if((*it)->depth == branchLevel2Halt) {
-        //std::cout << "Adding state to worklist\n";
-        addState2WorkList(**it);
-      }
+      addState2WorkList(**it);
     }
-  }
+  }*/
+
   if(ENABLE_LOGGING) logFile << "Exit\n";
   //time_t recTime;
   //char timeBuf[256];
@@ -3684,9 +3699,16 @@ void Executor::terminateStateOnError(ExecutionState &state,
   terminateState(state);
 
   if(shouldExitOn(termReason)) {
+		char dummySend;
     if(errPair.second == -1) {
       haltExecution = true;
-      MPI_Abort(MPI_COMM_WORLD, -1);
+			MPI_Send(&dummySend, 1, MPI_CHAR, 0, BUG_FOUND, MPI_COMM_WORLD);
+    } else {
+      std::string basename = ii.file.substr(ii.file.find_last_of("/\\") + 1);
+      if((basename == errPair.first) && (ii.line == errPair.second)) {
+        haltExecution = true;
+				MPI_Send(&dummySend, 1, MPI_CHAR, 0, BUG_FOUND, MPI_COMM_WORLD);
+      }
     }
   }
 }

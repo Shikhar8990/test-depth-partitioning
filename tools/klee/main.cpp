@@ -72,6 +72,7 @@ using namespace klee;
 #define CHECK_CONTINUE 5
 #define OFFLOAD_RESP 6
 #define START_RANGE_TASK 7
+#define BUG_FOUND 8
 
 #define PREFIX_MODE 101
 #define RANGE_MODE 102
@@ -1273,7 +1274,7 @@ int watchDog() {
 
 void timeOutCheck() {
   //sleep(int(MaxTime));
-  sleep(7200);
+  sleep(86400);
   MPI_Abort(MPI_COMM_WORLD, -1);
 }
 
@@ -1341,6 +1342,8 @@ void master(int argc, char **argv, char **envp) {
     //handler->getInfoStream().flush();
   }
 
+  auto stTime = time::getWallTime();
+
   std::deque<std::deque<unsigned char>> workList;
   std::vector<unsigned char> dummyprefix;
   std::deque<unsigned char> dummyWL;
@@ -1371,9 +1374,6 @@ void master(int argc, char **argv, char **envp) {
   int currRank = 2;
   auto wListIt = workList.begin();
   while(wListIt != workList.end()) {
-    if(currRank == num_cores) {
-      klee_error("No workers available!!");
-    }
     std::cout << "Starting worker: "<<currRank<<"\n";
     masterLog << "MASTER->WORKER: START_WORK ID:"<<currRank<<"\n";
     //recTime = time(NULL);
@@ -1427,6 +1427,13 @@ void master(int argc, char **argv, char **envp) {
       //strftime(timeBuf, sizeof(timeBuf), " TIME: %Y-%m-%d %H:%M:%S\n", localtime(&recTime));
       //masterLog<<timeBuf;
       //masterLog.flush();
+    }
+    if(status.MPI_TAG == BUG_FOUND) {
+      masterLog << "WORKER->MASTER:  BUG FOUND:"<<status.MPI_SOURCE<<"\n";
+      time::Span elapsed_time1(time::getWallTime() - stTime);
+      masterLog << "Time: "<<elapsed_time1<<"\n";
+      masterLog.close();
+      MPI_Abort(MPI_COMM_WORLD, -1);
     } 
   }
 
@@ -1439,6 +1446,13 @@ void master(int argc, char **argv, char **envp) {
   //once done with the initial prefixes offload when a worker becomes free 
   while(true) {
     MPI_Recv(&dummyRecv, 1, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+    if(status.MPI_TAG == BUG_FOUND) {
+      masterLog << "WORKER->MASTER: BUG FOUND:"<<status.MPI_SOURCE<<"\n";
+      time::Span elapsed_time1(time::getWallTime() - stTime);
+      masterLog << "Time: "<<elapsed_time1<<"\n";
+      masterLog.close();
+      MPI_Abort(MPI_COMM_WORLD, -1);
+    } 
     if(status.MPI_TAG == FINISH) {
       bool ffound=0;
       for(auto it=freeList.begin(); it!=freeList.end(); ++it) {
@@ -1913,7 +1927,6 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
       unsigned int line;
       if(parseNameLineOption(ErrorLocation, fname, line)) {
         interpreter->setErrorPair(std::make_pair(fname, line));
-        std::cout << "HAHA: "<<fname<<line<<std::endl;
       } else {
         klee_error("INVALID Error Location Arguments");
       }
@@ -1928,7 +1941,7 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
     interpreter->setLogFile(output_dir_file+"_log_file");
     int world_rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-    std::cout<<"DMap World Rank: "<<world_rank<<" File: " <<output_dir_file<<"\n";
+    //std::cout<<"DMap World Rank: "<<world_rank<<" File: " <<output_dir_file<<"\n";
 
     interpreter->runFunctionAsMain2(mainFn, pArgc, pArgv, pEnvp, workList);
 
