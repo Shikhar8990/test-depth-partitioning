@@ -79,6 +79,7 @@ using namespace klee;
 #define NO_MODE 103
 
 #define OFFLOADING_ENABLE true
+#define ENABLE_DYN_OFF true
 
 #define MASTER_NODE 0
 
@@ -1326,12 +1327,6 @@ std::string getNewSearch() {
 
 
 void master(int argc, char **argv, char **envp) {
-  /*char buf[256];
-  time_t t[2];
-  t[0] = time(NULL);
-  char timeBuf[256];
-  time_t recTime;
-  strftime(buf, sizeof(buf), "Started: %Y-%m-%d %H:%M:%S\n", localtime(&t[0]));*/
   auto startTime = std::time(nullptr);
   { // output clock info and start time
     std::stringstream startInfo;
@@ -1359,7 +1354,7 @@ void master(int argc, char **argv, char **envp) {
   std::ofstream masterLog;
   masterLog.open("log_master");
   //masterLog << "MASTER_START: "<<buf;
-  masterLog << "MASTER_START: \n";
+  masterLog << "MASTER_START \n";
 
   //*************Running Phase 1****************
   //This can be done with or without ranging
@@ -1376,10 +1371,6 @@ void master(int argc, char **argv, char **envp) {
   while(wListIt != workList.end()) {
     std::cout << "Starting worker: "<<currRank<<"\n";
     masterLog << "MASTER->WORKER: START_WORK ID:"<<currRank<<"\n";
-    //recTime = time(NULL);
-    //strftime(timeBuf, sizeof(timeBuf), " TIME: %Y-%m-%d %H:%M:%S\n", localtime(&recTime));
-    //masterLog<<timeBuf;
-    //masterLog.flush();
     MPI_Send(&((*wListIt)[0]), phase1Depth, MPI_CHAR, currRank, START_PREFIX_TASK, MPI_COMM_WORLD);
     busyList.push_back(currRank);
     wListIt = workList.erase(wListIt);
@@ -1392,10 +1383,6 @@ void master(int argc, char **argv, char **envp) {
       MPI_Send(&dummyWL[0], phase1Depth, MPI_CHAR, currRank, KILL, MPI_COMM_WORLD);
       std::cout << "Killing(not required) worker: "<<currRank<<"\n";
       masterLog << "MASTER->WORKER: KILL ID:"<<currRank<<"\n";
-      //recTime = time(NULL);
-      //strftime(timeBuf, sizeof(timeBuf), " TIME: %Y-%m-%d %H:%M:%S\n", localtime(&recTime));
-      //masterLog<<timeBuf;
-      //masterLog.flush();
     }
     freeList.push_back(currRank);
     ++currRank; 
@@ -1406,7 +1393,8 @@ void master(int argc, char **argv, char **envp) {
   char dummyRecv;
   auto currPrefix = workList.begin();
   while(currPrefix != workList.end() && (workList.size()>0)) {
-    MPI_Recv(&dummyRecv, 1, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+    MPI_Recv(&dummyRecv, 1, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, 
+      MPI_COMM_WORLD, &status);
     if(status.MPI_TAG == FINISH) {
       for(auto it = busyList.begin(); it != busyList.end(); ++it) {
         if (*it == status.MPI_SOURCE) {
@@ -1415,18 +1403,11 @@ void master(int argc, char **argv, char **envp) {
          }
       }
       masterLog << "WORKER->MASTER: FINISH ID:"<<status.MPI_SOURCE<<"\n";
-      //recTime = time(NULL);
-      //strftime(timeBuf, sizeof(timeBuf), " TIME: %Y-%m-%d %H:%M:%S\n", localtime(&recTime));
-      //masterLog<<timeBuf;
-      //masterLog.flush();
-      MPI_Send(&((*currPrefix)[0]), phase1Depth, MPI_CHAR, status.MPI_SOURCE, START_PREFIX_TASK, MPI_COMM_WORLD);
+      MPI_Send(&((*currPrefix)[0]), phase1Depth, MPI_CHAR, status.MPI_SOURCE, 
+        START_PREFIX_TASK, MPI_COMM_WORLD);
       currPrefix = workList.erase(currPrefix);
       masterLog << "MASTER->WORKER: START_WORK ID:"<<status.MPI_SOURCE<<"\n";
       busyList.push_back(status.MPI_SOURCE);
-      //recTime = time(NULL);
-      //strftime(timeBuf, sizeof(timeBuf), " TIME: %Y-%m-%d %H:%M:%S\n", localtime(&recTime));
-      //masterLog<<timeBuf;
-      //masterLog.flush();
     }
     if(status.MPI_TAG == BUG_FOUND) {
       masterLog << "WORKER->MASTER:  BUG FOUND:"<<status.MPI_SOURCE<<"\n";
@@ -1439,52 +1420,44 @@ void master(int argc, char **argv, char **envp) {
 
   std::cout << "Done with all prefixes\n"; 
   masterLog << "MASTER: DONE_WITH_ALL_PREFIXES\n"; 
-  //recTime = time(NULL);
-  //strftime(timeBuf, sizeof(timeBuf), " TIME: %Y-%m-%d %H:%M:%S\n", localtime(&recTime));
-  //masterLog<<timeBuf;
-  //masterLog.flush();
   //once done with the initial prefixes offload when a worker becomes free 
   while(true) {
-    MPI_Recv(&dummyRecv, 1, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-    if(status.MPI_TAG == BUG_FOUND) {
-      masterLog << "WORKER->MASTER: BUG FOUND:"<<status.MPI_SOURCE<<"\n";
-      time::Span elapsed_time1(time::getWallTime() - stTime);
-      masterLog << "Time: "<<elapsed_time1<<"\n";
-      masterLog.close();
-      MPI_Abort(MPI_COMM_WORLD, -1);
-    } 
-    if(status.MPI_TAG == FINISH) {
-      bool ffound=0;
-      for(auto it=freeList.begin(); it!=freeList.end(); ++it) {
-        if(*it == status.MPI_SOURCE) {
-          ffound=1;
-          break;
-        } 
-      }
-      if(!ffound) freeList.push_back(status.MPI_SOURCE);
+    MPI_Status status;
+    int flag;
+    MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
 
-      for(auto it = busyList.begin(); it != busyList.end(); ++it) {
-        if (*it == status.MPI_SOURCE) {
-          busyList.erase(it);
-          break;
-         }
-      }
-      masterLog << "WORKER->MASTER: FINISH ID:"<<status.MPI_SOURCE<<"\n";
-      //recTime = time(NULL);
-      //strftime(timeBuf, sizeof(timeBuf), " TIME: %Y-%m-%d %H:%M:%S\n", localtime(&recTime));
-      //masterLog<<timeBuf;
-      //masterLog.flush();
-      //if all workers finish then shut down the system
-      if(freeList.size() == (num_cores-2)) {
-        //t[1] = time(NULL);
-        //strftime(buf, sizeof(buf), "Finished: %Y-%m-%d %H:%M:%S\n", localtime(&t[1]));
-        //masterLog << "MASTER_END: "<<buf;
-        //strcpy(buf, "Elapsed: ");
-        //strcpy(format_tdiff(buf, t[1] - t[0]), "\n");
-        //masterLog << "MASTER_ELAPSED: "<<buf;
-        masterLog << "MASTER_ELAPSED: \n";
+    if(flag) {
+      MPI_Recv(&dummyRecv, 1, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+      if(status.MPI_TAG == BUG_FOUND) {
+        masterLog << "WORKER->MASTER: BUG FOUND:"<<status.MPI_SOURCE<<"\n";
+        time::Span elapsed_time1(time::getWallTime() - stTime);
+        masterLog << "Time: "<<elapsed_time1<<"\n";
         masterLog.close();
         MPI_Abort(MPI_COMM_WORLD, -1);
+      } 
+      if(status.MPI_TAG == FINISH) {
+        bool ffound=0;
+        for(auto it=freeList.begin(); it!=freeList.end(); ++it) {
+          if(*it == status.MPI_SOURCE) {
+            ffound=1;
+            break;
+          } 
+        }
+        if(!ffound) freeList.push_back(status.MPI_SOURCE);
+
+        for(auto it = busyList.begin(); it != busyList.end(); ++it) {
+          if (*it == status.MPI_SOURCE) {
+            busyList.erase(it);
+            break;
+           }
+        }
+        masterLog << "WORKER->MASTER: FINISH ID:"<<status.MPI_SOURCE<<"\n";
+        //if all workers finish then shut down the system
+        if(freeList.size() == (num_cores-2)) {
+          masterLog << "MASTER_ELAPSED: \n";
+          masterLog.close();
+          MPI_Abort(MPI_COMM_WORLD, -1);
+        }
       }
     }
 
@@ -1509,21 +1482,13 @@ void master(int argc, char **argv, char **envp) {
           break;
         }
       }
-      //masterLog.flush();
       //found a valid busy worker
       if(foundWorker2Offload) {
         int dummyVal=0;
         MPI_Request offloadReq;
         MPI_Status offloadStatus;
-        //MPI_Isend(&dummyVal, 1, MPI_INT, worker2offload, OFFLOAD, MPI_COMM_WORLD, &offloadReq);
-        //waiting for the worker to receive the offload request
-        //MPI_Wait(&offloadReq, &offloadStatus);
         MPI_Send(&dummyVal, 1, MPI_INT, worker2offload, OFFLOAD, MPI_COMM_WORLD);
         masterLog << "MASTER->WORKER: OFFLOAD_SENT ID:"<<worker2offload<<"\n";
-        //recTime = time(NULL);
-        //strftime(timeBuf, sizeof(timeBuf), " TIME: %Y-%m-%d %H:%M:%S\n", localtime(&recTime));
-        //masterLog<<timeBuf;
-        //masterLog.flush();
 
         //remove the worker from the offloadActiveList
         for(auto it = offloadActiveList.begin(); it != offloadActiveList.end(); ++it) {
@@ -1534,7 +1499,6 @@ void master(int argc, char **argv, char **envp) {
         }
 
         //Recieve the offloaded work
-        //MPI_Probe(worker2offload, OFFLOAD_RESP, MPI_COMM_WORLD, &status2);
         MPI_Probe(worker2offload, MPI_ANY_TAG, MPI_COMM_WORLD, &status2);
         int count;
         MPI_Get_count(&status2, MPI_CHAR, &count);
@@ -1543,9 +1507,6 @@ void master(int argc, char **argv, char **envp) {
           buffer.resize(count);
           MPI_Recv(&buffer[0], count, MPI_CHAR, worker2offload, OFFLOAD_RESP, MPI_COMM_WORLD, &status2);
           masterLog << "WORKER->MASTER: OFFLOAD RCVD ID:"<<status2.MPI_SOURCE<<" Length:"<<count<<"\n";
-          //recTime = time(NULL);
-          //strftime(timeBuf, sizeof(timeBuf), " TIME: %Y-%m-%d %H:%M:%S\n", localtime(&recTime));
-          //masterLog<<timeBuf;
           for(int x=0; x<count; x++)
             masterLog <<buffer[x];
           masterLog<<"\n";
@@ -1556,32 +1517,13 @@ void master(int argc, char **argv, char **envp) {
             //picking up thr worker that has been idle the longest
             unsigned int pickedWorker = freeList.front();
             freeList.pop_front();
-            //decide if this is a prefix or a range that can be sent
-            bool founddash = false;
-            for(int x=0; x<buffer.size(); x++) {
-              if(buffer[x] == '-') {
-                founddash = true;
-                break;
-              }
-            }
-            if(founddash) {
-              masterLog << "MASTER->WORKER: RANGE_TASK_SEND ID:"<<pickedWorker<<" Length:"<<count;
-              //recTime = time(NULL);
-              //strftime(timeBuf, sizeof(timeBuf), " TIME: %Y-%m-%d %H:%M:%S\n", localtime(&recTime));
-              //masterLog<<timeBuf;
-              MPI_Send(&buffer[0], count, MPI_CHAR, pickedWorker, START_RANGE_TASK, MPI_COMM_WORLD);
-            } else {
-              masterLog << "MASTER->WORKER: PREFIX_TASK_SEND ID:"<<pickedWorker<<" Length:"<<count;
-              //recTime = time(NULL);
-              //strftime(timeBuf, sizeof(timeBuf), " TIME: %Y-%m-%d %H:%M:%S\n", localtime(&recTime));
-              //masterLog<<timeBuf;
-              MPI_Send(&buffer[0], count, MPI_CHAR, pickedWorker, START_PREFIX_TASK, MPI_COMM_WORLD);
-            }
+            masterLog << "MASTER->WORKER: PREFIX_TASK_SEND ID:"<<pickedWorker<<" Length:"<<count;
+            MPI_Send(&buffer[0], count, MPI_CHAR, pickedWorker, START_PREFIX_TASK, MPI_COMM_WORLD);
             masterLog << "MASTER->WORKER: START_WORK ID:"<<pickedWorker<<"\n";
-            //recTime = time(NULL);
-            //strftime(timeBuf, sizeof(timeBuf), " TIME: %Y-%m-%d %H:%M:%S\n", localtime(&recTime));
-            //masterLog<<timeBuf;
-          }
+          } 
+          auto wrkr = busyList.front();
+          busyList.pop_front();
+          busyList.push_back(wrkr); 
         } 
       }
     } 

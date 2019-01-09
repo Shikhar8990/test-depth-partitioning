@@ -89,7 +89,8 @@ void DFSSearcher::update(ExecutionState *current,
 }
 
 ExecutionState* DFSSearcher::getState2Offload2() {
-  ExecutionState *ptr2State = states[theRNG.getInt32()%states.size()];
+  //ExecutionState *ptr2State = states[theRNG.getInt32()%states.size()];
+  ExecutionState *ptr2State = states[0];
   ExecutionState retState = *ptr2State;
   return ptr2State;
 }
@@ -255,8 +256,7 @@ ExecutionState &RandomSearcher::getState2Offload() {
 }
 
 ExecutionState* RandomSearcher::getState2Offload2() {
-  std::cout << "SS_Searcher: Random Calling Offload\n";
-  return states[theRNG.getInt32()%states.size()];
+  return states[0];
 }
 
 ExecutionState &RandomSearcher::selectState() {
