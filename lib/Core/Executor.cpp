@@ -3575,14 +3575,6 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
   if (!OnlyOutputStatesCoveringNew || state.coveredNew || 
       (AlwaysOutputSeeds && seedMap.count(&state)))
     interpreterHandler->processTestCase(state, 0, 0);
-    //std::cout << "Branch History: ";
-    //std::vector<unsigned char> lastTestPath;
-    //lastTestPath.clear();
-    //pathWriter->readStream(getPathStreamID(state), lastTestPath);
-    //for (auto I = lastTestPath.begin(); I != lastTestPath.end(); ++I) {
-    //  std::cout << *I;
-    //}
-    //std::cout << "\n";
     if(dumpSingleFile) std::cout << "Branch History: ";
     lastTestPath.clear();
     pathWriter->readStream(getPathStreamID(state), lastTestPath);

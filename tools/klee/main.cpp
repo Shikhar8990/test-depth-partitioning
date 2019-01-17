@@ -1312,12 +1312,6 @@ int main(int argc, char **argv, char **envp) {
 std::string getNewSearch() {
   if(searchPolicy == "BFS") {
     return "BFS";
-  } else if(searchPolicy == "RAND") {
-    int searchId = theRNG.getInt32()%3;
-    if (searchId == 0) return "BFS";
-    else if(searchId == 1) return "DFS";
-    else if(searchId == 2) return "RAND";
-    else return "RAND";
   } else if (searchPolicy == "DFS") {
     return "DFS";
   } else if (searchPolicy == "RAND") {
