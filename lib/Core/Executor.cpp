@@ -3077,30 +3077,38 @@ void Executor::check2Offload() {
   int tag, flag;
   MPI_Status status;
   //if(!waiting4OffloadReq) {
-  MPI_Iprobe(MASTER_NODE, OFFLOAD, MPI_COMM_WORLD, &flag, &status);
+  MPI_Iprobe(MASTER_NODE, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
   waiting4OffloadReq = true;
 
   //}
   //MPI_Test(&offloadReq, &flag, &status);
   if(flag) {
-    int count, buffer;
-    MPI_Get_count(&status, MPI_INT, &count);
-    MPI_Recv(&buffer, count, MPI_INT, MASTER_NODE, OFFLOAD, MPI_COMM_WORLD, &status);
-    if(ENABLE_LOGGING) logFile << "Offload Request\n";
-    bool valid;
-    ExecutionState* state2Remove = offLoad(valid);
-    //if(ENABLE_LOGGING) logFile.flush();
-    if(valid) {
-      bool foundState=false;
-      for(auto it=removedStates.begin(); it!=removedStates.end(); ++it) {
-        if(*it == state2Remove) {
-          foundState=true;
-          break;
+    if(status.MPI_TAG == OFFLOAD) {
+      int count, buffer;
+      MPI_Get_count(&status, MPI_INT, &count);
+      MPI_Recv(&buffer, count, MPI_INT, MASTER_NODE, OFFLOAD, MPI_COMM_WORLD, &status);
+      if(ENABLE_LOGGING) logFile << "Offload Request\n";
+      bool valid;
+      ExecutionState* state2Remove = offLoad(valid);
+      //if(ENABLE_LOGGING) logFile.flush();
+      if(valid) {
+        bool foundState=false;
+        for(auto it=removedStates.begin(); it!=removedStates.end(); ++it) {
+          if(*it == state2Remove) {
+            foundState=true;
+            break;
+          }
         }
+        if(!foundState) removedStates.push_back(state2Remove);
       }
-      if(!foundState) removedStates.push_back(state2Remove);
+      waiting4OffloadReq = false;
     }
-    waiting4OffloadReq = false;
+    if(status.MPI_TAG == KILL) {
+      char dummyRecv;
+      MPI_Status status2;
+      MPI_Recv(&dummyRecv, 1, MPI_CHAR, MASTER_NODE, KILL, MPI_COMM_WORLD, &status2);
+      haltExecution = true;
+    }
   }
 }
 

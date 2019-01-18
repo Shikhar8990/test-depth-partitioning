@@ -73,13 +73,13 @@ using namespace klee;
 #define OFFLOAD_RESP 6
 #define START_RANGE_TASK 7
 #define BUG_FOUND 8
+#define TIMEOUT 9
 
 #define PREFIX_MODE 101
 #define RANGE_MODE 102
 #define NO_MODE 103
 
-#define OFFLOADING_ENABLE true
-#define ENABLE_DYN_OFF true
+#define OFFLOADING_ENABLE false
 
 #define MASTER_NODE 0
 
@@ -168,6 +168,11 @@ namespace {
   cl::opt<bool>
   OptExitOnError("exit-on-error",
               cl::desc("Exit if errors occur"));
+
+  cl::opt<unsigned int>
+  timeOut("timeOut",
+          cl::desc("Exit on timeout"),
+          cl::init(0)); 
 
 	/*** Linking options ***/
 
@@ -1274,9 +1279,10 @@ int watchDog() {
 }
 
 void timeOutCheck() {
-  //sleep(int(MaxTime));
-  sleep(86400);
-  MPI_Abort(MPI_COMM_WORLD, -1);
+  sleep(int(timeOut));
+  char dummy;
+  MPI_Send(&dummy, 1, MPI_CHAR, 0, TIMEOUT, MPI_COMM_WORLD);
+
 }
 
 int main(int argc, char **argv, char **envp) {
@@ -1346,7 +1352,7 @@ void master(int argc, char **argv, char **envp) {
   int num_cores;
   MPI_Comm_size(MPI_COMM_WORLD, &num_cores);
   std::ofstream masterLog;
-  masterLog.open("log_master");
+  masterLog.open("log_master_"+OutputDir);
   //masterLog << "MASTER_START: "<<buf;
   masterLog << "MASTER_START \n";
 
@@ -1374,7 +1380,8 @@ void master(int argc, char **argv, char **envp) {
   //If worklist size is smaller than cores, kill the rest of the processes
   while(currRank < num_cores) {
     if(!OFFLOADING_ENABLE) {
-      MPI_Send(&dummyWL[0], phase1Depth, MPI_CHAR, currRank, KILL, MPI_COMM_WORLD);
+      char dummy2;
+      MPI_Send(&dummy2, 1, MPI_CHAR, currRank, KILL, MPI_COMM_WORLD);
       std::cout << "Killing(not required) worker: "<<currRank<<"\n";
       masterLog << "MASTER->WORKER: KILL ID:"<<currRank<<"\n";
     }
@@ -1383,7 +1390,6 @@ void master(int argc, char **argv, char **envp) {
   }
 
   //receive FINISH messages from workers and offload further work
-  int numStates2Explore=10;
   char dummyRecv;
   auto currPrefix = workList.begin();
   while(currPrefix != workList.end() && (workList.size()>0)) {
@@ -1408,7 +1414,13 @@ void master(int argc, char **argv, char **envp) {
       time::Span elapsed_time1(time::getWallTime() - stTime);
       masterLog << "Time: "<<elapsed_time1<<"\n";
       masterLog.close();
-      MPI_Abort(MPI_COMM_WORLD, -1);
+  
+      char dummy;
+      for(int x=2; x<num_cores; ++x) {
+          MPI_Send(&dummy, 1, MPI_CHAR, x, KILL, MPI_COMM_WORLD);
+      }
+
+      //MPI_Abort(MPI_COMM_WORLD, -1);
     } 
   }
 
@@ -1427,7 +1439,13 @@ void master(int argc, char **argv, char **envp) {
         time::Span elapsed_time1(time::getWallTime() - stTime);
         masterLog << "Time: "<<elapsed_time1<<"\n";
         masterLog.close();
-        MPI_Abort(MPI_COMM_WORLD, -1);
+        
+        char dummy;
+        for(int x=2; x<num_cores; ++x) {
+          MPI_Send(&dummy, 1, MPI_CHAR, x, KILL, MPI_COMM_WORLD);
+        }
+
+        //MPI_Abort(MPI_COMM_WORLD, -1);
       } 
       if(status.MPI_TAG == FINISH) {
         bool ffound=0;
@@ -1451,6 +1469,12 @@ void master(int argc, char **argv, char **envp) {
           masterLog << "MASTER_ELAPSED: \n";
           masterLog.close();
           MPI_Abort(MPI_COMM_WORLD, -1);
+        }
+      }
+      if(status.MPI_TAG == TIMEOUT) {
+        char dummy;
+        for(int x=2; x<num_cores; ++x) {
+          MPI_Send(&dummy, 1, MPI_CHAR, x, KILL, MPI_COMM_WORLD);
         }
       }
     }
@@ -1511,7 +1535,7 @@ void master(int argc, char **argv, char **envp) {
             //picking up thr worker that has been idle the longest
             unsigned int pickedWorker = freeList.front();
             freeList.pop_front();
-            masterLog << "MASTER->WORKER: PREFIX_TASK_SEND ID:"<<pickedWorker<<" Length:"<<count;
+            masterLog << "MASTER->WORKER: PREFIX_TASK_SEND ID:"<<pickedWorker<<" Length:"<<count<<"\n";
             MPI_Send(&buffer[0], count, MPI_CHAR, pickedWorker, START_PREFIX_TASK, MPI_COMM_WORLD);
             masterLog << "MASTER->WORKER: START_WORK ID:"<<pickedWorker<<"\n";
           } 
@@ -1538,9 +1562,8 @@ void slave(int argc, char **argv, char **envp) {
     MPI_Get_count(&status, MPI_CHAR, &count);
 
     if(status.MPI_TAG == KILL) {
-      std::deque<unsigned char> recv_prefix;
-      recv_prefix.resize(phase1Depth);
-      MPI_Recv(&recv_prefix[0], phase1Depth, MPI_CHAR, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+      char dummy2;
+      MPI_Recv(&dummy2, 1, MPI_CHAR, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
       std::cout << "Killing Process: "<<world_rank<<"\n";
       return;
 
