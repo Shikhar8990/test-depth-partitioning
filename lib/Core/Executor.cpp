@@ -3073,7 +3073,6 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
 }
 
 void Executor::check2Offload() {
-  int world_rank;
   int tag, flag;
   MPI_Status status;
   //if(!waiting4OffloadReq) {
@@ -3702,12 +3701,26 @@ void Executor::terminateStateOnError(ExecutionState &state,
 		char dummySend;
     if(errPair.second == -1) {
       haltExecution = true;
-			MPI_Send(&dummySend, 1, MPI_CHAR, 0, BUG_FOUND, MPI_COMM_WORLD);
+      int world_rank;
+      MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+      if (world_rank > 1) {
+			  MPI_Send(&dummySend, 1, MPI_CHAR, 0, BUG_FOUND, MPI_COMM_WORLD);
+      } 
+      //else {
+      //  MPI_Abort(MPI_COMM_WORLD, -1);
+      //}
     } else {
       std::string basename = ii.file.substr(ii.file.find_last_of("/\\") + 1);
       if((basename == errPair.first) && (ii.line == errPair.second)) {
         haltExecution = true;
-				MPI_Send(&dummySend, 1, MPI_CHAR, 0, BUG_FOUND, MPI_COMM_WORLD);
+        int world_rank;
+        MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+        if (world_rank > 1) {
+				  MPI_Send(&dummySend, 1, MPI_CHAR, 0, BUG_FOUND, MPI_COMM_WORLD);
+        } 
+        //else {
+        //  MPI_Abort(MPI_COMM_WORLD, -1);
+        //}
       }
     }
   }

@@ -74,6 +74,7 @@ using namespace klee;
 #define START_RANGE_TASK 7
 #define BUG_FOUND 8
 #define TIMEOUT 9
+#define NORMAL_TASK 10
 
 #define PREFIX_MODE 101
 #define RANGE_MODE 102
@@ -1357,12 +1358,25 @@ void master(int argc, char **argv, char **envp) {
   masterLog << "MASTER_START \n";
 
   //*************Running Phase 1****************
-  //This can be done with or without ranging
-  if(rangeBounds != "0") {
-    for(int i=0; i<rangeBounds.size(); ++i) dummyprefix.push_back(rangeBounds[i]);
-    launchKleeInstance(0, argc, argv, envp, workList, dummyprefix, phase1Depth, RANGE_MODE, "BFS");
-  } else {
+  if(phase1Depth != 0) { 
     launchKleeInstance(0, argc, argv, envp, workList, dummyprefix, phase1Depth, NO_MODE, "BFS");
+  } else { //single core mode, just get a worker to launck a normal klee instance, only to be 
+    //used with 3 cores
+    char dummychar;
+    MPI_Status status3;
+    MPI_Send(&dummychar, 1, MPI_CHAR, 2, NORMAL_TASK, MPI_COMM_WORLD);
+    MPI_Recv(&dummychar, 1, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status3);
+    if(status3.MPI_TAG == FINISH) {
+      masterLog << "MASTER_ELAPSED: \n";
+    } else if(status3.MPI_TAG == TIMEOUT) {
+      masterLog << "MASTER_ELAPSED: \n";
+    } else if(status3.MPI_TAG == BUG_FOUND) {
+      masterLog << "WORKER->MASTER:  BUG FOUND:"<<status3.MPI_SOURCE<<"\n";
+      time::Span elapsed_time1(time::getWallTime() - stTime);
+      masterLog << "Time: "<<elapsed_time1<<"\n";
+    }
+    masterLog.close();
+    MPI_Abort(MPI_COMM_WORLD, -1);
   }
 
   //*************Seeding the slaves*************
@@ -1419,13 +1433,12 @@ void master(int argc, char **argv, char **envp) {
       for(int x=2; x<num_cores; ++x) {
           MPI_Send(&dummy, 1, MPI_CHAR, x, KILL, MPI_COMM_WORLD);
       }
-
-      //MPI_Abort(MPI_COMM_WORLD, -1);
     } 
   }
 
   std::cout << "Done with all prefixes\n"; 
-  masterLog << "MASTER: DONE_WITH_ALL_PREFIXES\n"; 
+  masterLog << "MASTER: DONE_WITH_ALL_PREFIXES\n";
+   
   //once done with the initial prefixes offload when a worker becomes free 
   while(true) {
     MPI_Status status;
@@ -1579,6 +1592,12 @@ void slave(int argc, char **argv, char **envp) {
       std::cout << "Finish: " << world_rank << "\n";
       MPI_Send(&result, 1, MPI_CHAR, 0, FINISH, MPI_COMM_WORLD);
 
+    } else if(status.MPI_TAG == NORMAL_TASK) {
+      std::cout << "Process: "<<world_rank<<" Normal Task" <<"\n";
+      std::vector<unsigned char> recv_prefix;
+      recv_prefix.resize(count);
+      launchKleeInstance(world_rank, argc, argv, envp,
+        dummyworkList, recv_prefix, 0, NO_MODE, getNewSearch());
     } else if(status.MPI_TAG == START_RANGE_TASK) {
       std::vector<unsigned char> buffer;
       buffer.resize(count);
