@@ -109,7 +109,7 @@
 #define MIN_STATES 2
 #define DECREMENT_INT 2
 
-#define ENABLE_LOGGING false
+#define ENABLE_LOGGING true
 #define ENABLE_DEBUG false
 
 #define dumpSingleFile false
@@ -439,7 +439,8 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
                       std::min(maxCoreSolverTime, maxInstructionTime)
                     : std::max(maxCoreSolverTime, maxInstructionTime);
 
-  if (coreSolverTimeout) UseForkedCoreSolver = true;
+  if (coreSolverTimeout)
+    UseForkedCoreSolver = true;
   Solver *coreSolver = klee::createCoreSolver(CoreSolverToUse);
   if (!coreSolver) {
     klee_error("Failed to create core solver\n");
@@ -3162,7 +3163,7 @@ ExecutionState* Executor::offLoad(bool &valid) {
       if(dumpSingleFile) std::cout << "Packet to Send: ";
       std::vector<unsigned char> packet2send;
       pathWriter->readStream(getPathStreamID(*resp), packet2send);
-      printPath(packet2send);
+      printPath(packet2send, std::cout, "Offloading Path: ");
       MPI_Send(&packet2send[0], packet2send.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
       valid=true;
       return resp;
@@ -3390,6 +3391,7 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
   haltExecution = false;
   while (!states.empty() && !haltExecution) {
     ExecutionState &state = searcher->selectState();
+    if(ENABLE_LOGGING) printStatePath(state, std::cout, "Select path: ");
     KInstruction *ki = state.pc;
     stepInstruction(state);
 
@@ -4732,11 +4734,9 @@ bool Executor::updateCurrentLowerBound(std::vector<unsigned char> inPath) {
 }
 
 bool Executor::checkRange(std::vector<unsigned char> inPath) {
-  bool violateLowerBound = false;
-  bool violateUpperBound = false;
   bool violatePrefix = false;
   if(dumpSingleFile) std::cout << "Checking feasibility of Path: ";
-  if(false) if(ENABLE_LOGGING) logFile << "Checking feasibility of Path: ";
+  if(ENABLE_LOGGING) logFile << "Checking feasibility of Path: ";
 
   for (auto I = inPath.begin(); I != inPath.end(); ++I) {
       if(dumpSingleFile) std::cout << *I;
@@ -4751,42 +4751,7 @@ bool Executor::checkRange(std::vector<unsigned char> inPath) {
       violatePrefix = true;
     }
   }
-  if(enableRanging) {
-    if(rangeCheckMode == OPEN_OPEN) {
-      int minLen = std::min(inPath.size(), lowerBound.size());
-      if (convertPath2Number(inPath, minLen) <= convertPath2Number(lowerBound, minLen))
-        violateLowerBound = true;
-      minLen = std::min(inPath.size(), upperBound.size());
-      if (convertPath2Number(inPath, minLen) >= convertPath2Number(upperBound, minLen))
-        violateUpperBound = true;
-    } else if(rangeCheckMode == OPEN_CLOSE) {
-      int minLen = std::min(inPath.size(), lowerBound.size());
-      if (convertPath2Number(inPath, minLen) <= convertPath2Number(lowerBound, minLen))
-        violateLowerBound = true;
-
-      minLen = std::min(inPath.size(), upperBound.size());
-      if (convertPath2Number(inPath, minLen) > convertPath2Number(upperBound, minLen))
-        violateUpperBound = true;
-    } else if(rangeCheckMode == CLOSE_OPEN) {
-      int minLen = std::min(inPath.size(), lowerBound.size());
-      if (convertPath2Number(inPath, minLen) < convertPath2Number(lowerBound, minLen))
-        violateLowerBound = true;
-
-      minLen = std::min(inPath.size(), upperBound.size());
-      if (convertPath2Number(inPath, minLen) >= convertPath2Number(upperBound, minLen))
-        violateUpperBound = true;
-    } else if(rangeCheckMode == CLOSE_CLOSE) {
-      int minLen = std::min(inPath.size(), lowerBound.size());
-      if (convertPath2Number(inPath, minLen) < convertPath2Number(lowerBound, minLen))
-        violateLowerBound = true;
-
-      minLen = std::min(inPath.size(), upperBound.size());
-      if (convertPath2Number(inPath, minLen) > convertPath2Number(upperBound, minLen))
-        violateUpperBound = true;
-    }
-  }
-  return (violateUpperBound|violateLowerBound|violatePrefix);
-  //return (violateUpperBound|violateLowerBound);
+  return (violatePrefix);
 }
 
 void Executor::setUpperBound(std::vector<unsigned char> path) {
@@ -4798,13 +4763,18 @@ void Executor::setLowerBound(std::vector<unsigned char> path) {
 }
 
 //adding a utility to print paths
-void Executor::printPath(std::vector<unsigned char> path) {
+void Executor::printPath(std::vector<unsigned char> path, std::ostream& log, std::string message) {
+  log<<message;
   for (auto I = path.begin(); I != path.end(); ++I) {
-      if(dumpSingleFile) std::cout << *I;
-      if(ENABLE_LOGGING) logFile << *I;
-    }
-    if(dumpSingleFile) std::cout << "\n";
-    if(ENABLE_LOGGING) logFile << "\n";
+    log << *I;
+  }
+  log << std::endl;
+}
+
+void Executor::printStatePath(ExecutionState& state, std::ostream& log, std::string message) {
+  std::vector<unsigned char> lastTestPath;
+  pathWriter->readStream(getPathStreamID(state), lastTestPath);
+  printPath(lastTestPath, log, message);
 }
 
 /// Returns the errno location in memory

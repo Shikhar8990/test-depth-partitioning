@@ -566,7 +566,9 @@ private:
   void checkMemoryUsage();
   void printDebugInstructions(ExecutionState &state);
   void doDumpStates();
-  void printPath(std::vector<unsigned char> path);
+  void printPath(std::vector<unsigned char> path, std::ostream& log, std::string message);
+  void printStatePath(ExecutionState& state, std::ostream& log, std::string message);
+
 
 public:
   Executor(llvm::LLVMContext &ctx, const InterpreterOptions &opts,
