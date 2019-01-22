@@ -1519,7 +1519,7 @@ void master(int argc, char **argv, char **envp) {
         MPI_Request offloadReq;
         MPI_Status offloadStatus;
         MPI_Send(&dummyVal, 1, MPI_INT, worker2offload, OFFLOAD, MPI_COMM_WORLD);
-        masterLog << "MASTER->WORKER: OFFLOAD_SENT ID:"<<worker2offload<<"\n";
+        //masterLog << "MASTER->WORKER: OFFLOAD_SENT ID:"<<worker2offload<<"\n";
 
         //remove the worker from the offloadActiveList
         for(auto it = offloadActiveList.begin(); it != offloadActiveList.end(); ++it) {
@@ -1537,11 +1537,11 @@ void master(int argc, char **argv, char **envp) {
           std::deque<unsigned char> buffer;
           buffer.resize(count);
           MPI_Recv(&buffer[0], count, MPI_CHAR, worker2offload, OFFLOAD_RESP, MPI_COMM_WORLD, &status2);
-          masterLog << "WORKER->MASTER: OFFLOAD RCVD ID:"<<status2.MPI_SOURCE<<" Length:"<<count<<"\n";
-          for(int x=0; x<count; x++)
-            masterLog <<buffer[x];
-          masterLog<<"\n";
-          masterLog.flush();
+          //masterLog << "WORKER->MASTER: OFFLOAD RCVD ID:"<<status2.MPI_SOURCE<<" Length:"<<count<<"\n";
+          //for(int x=0; x<count; x++)
+            //masterLog <<buffer[x];
+          //masterLog<<"\n";
+          //masterLog.flush();
 
           //Send the offloaded work to the free worker 
           if(buffer[0]!='x') {
