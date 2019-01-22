@@ -109,7 +109,7 @@
 #define MIN_STATES 2
 #define DECREMENT_INT 2
 
-#define ENABLE_LOGGING true
+#define ENABLE_LOGGING false
 #define ENABLE_DEBUG false
 
 #define dumpSingleFile false
@@ -3076,12 +3076,9 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
 void Executor::check2Offload() {
   int tag, flag;
   MPI_Status status;
-  //if(!waiting4OffloadReq) {
   MPI_Iprobe(MASTER_NODE, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
   waiting4OffloadReq = true;
 
-  //}
-  //MPI_Test(&offloadReq, &flag, &status);
   if(flag) {
     if(status.MPI_TAG == OFFLOAD) {
       int count, buffer;
@@ -3401,7 +3398,7 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
     checkMemoryUsage();
 
     updateStates(&state);
-		//check if there is atleast one state which has a depth less than 
+    //check if there is atleast one state which has a depth less than 
     //that of the branch halt threshold
     if(enableBranchHalt) {
       bool haltDuetoBranchLevel = true;
@@ -3418,14 +3415,6 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
       }
     }
 		
-    //another method where master generates states equal to the
-    //number of workers which, just a hack the depth parm in this
-    //case will be the number of workers
-    //if(enableBranchHalt) {
-    //  if(states.size() == branchLevel2Halt) {
-    //    haltExecution = true;
-    //  }
-    //}
 	}
     
 	//here empty out all the states into the worklist
@@ -3437,19 +3426,7 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
  		}		
 	}
 	 
-  /*if(enableBranchHalt) {
-    for(auto it = states.begin(); it != states.end(); ++it) {
-      addState2WorkList(**it);
-    }
-  }*/
-
   if(ENABLE_LOGGING) logFile << "Exit\n";
-  //time_t recTime;
-  //char timeBuf[256];
-  //recTime = time(NULL);
-  //strftime(timeBuf, sizeof(timeBuf), " TIME: %Y-%m-%d %H:%M:%S\n", localtime(&recTime));
-  //if(ENABLE_LOGGING) logFile << timeBuf;
-  //if(ENABLE_LOGGING) logFile.close(); 
 
   delete searcher;
   searcher = 0;

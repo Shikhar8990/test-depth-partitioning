@@ -80,7 +80,7 @@ using namespace klee;
 #define RANGE_MODE 102
 #define NO_MODE 103
 
-#define OFFLOADING_ENABLE false
+#define OFFLOADING_ENABLE true
 
 #define MASTER_NODE 0
 
@@ -1367,9 +1367,9 @@ void master(int argc, char **argv, char **envp) {
     MPI_Send(&dummychar, 1, MPI_CHAR, 2, NORMAL_TASK, MPI_COMM_WORLD);
     MPI_Recv(&dummychar, 1, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status3);
     if(status3.MPI_TAG == FINISH) {
-      masterLog << "MASTER_ELAPSED: \n";
+      masterLog << "MASTER_ELAPSED Normal Mode: \n";
     } else if(status3.MPI_TAG == TIMEOUT) {
-      masterLog << "MASTER_ELAPSED: \n";
+      masterLog << "MASTER_ELAPSED Timeout: \n";
     } else if(status3.MPI_TAG == BUG_FOUND) {
       masterLog << "WORKER->MASTER:  BUG FOUND:"<<status3.MPI_SOURCE<<"\n";
       time::Span elapsed_time1(time::getWallTime() - stTime);
