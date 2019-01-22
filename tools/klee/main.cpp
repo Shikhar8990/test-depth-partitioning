@@ -1522,12 +1522,12 @@ void master(int argc, char **argv, char **envp) {
         //masterLog << "MASTER->WORKER: OFFLOAD_SENT ID:"<<worker2offload<<"\n";
 
         //remove the worker from the offloadActiveList
-        for(auto it = offloadActiveList.begin(); it != offloadActiveList.end(); ++it) {
-          if (*it == worker2offload) {
-            offloadActiveList.erase(it);
-            break;
-          }
-        }
+        //for(auto it = offloadActiveList.begin(); it != offloadActiveList.end(); ++it) {
+        //  if (*it == worker2offload) {
+        //   offloadActiveList.erase(it);
+        //  break;
+        //}
+        //}
 
         //Recieve the offloaded work
         MPI_Probe(worker2offload, MPI_ANY_TAG, MPI_COMM_WORLD, &status2);
@@ -1543,6 +1543,14 @@ void master(int argc, char **argv, char **envp) {
           //masterLog<<"\n";
           //masterLog.flush();
 
+          //Removing the offload active list worker 
+          for(auto it = offloadActiveList.begin(); it != offloadActiveList.end(); ++it) {
+            if (*it == worker2offload) {
+              offloadActiveList.erase(it);
+              break;
+            }
+          }
+
           //Send the offloaded work to the free worker 
           if(buffer[0]!='x') {
             //picking up thr worker that has been idle the longest
@@ -1551,6 +1559,8 @@ void master(int argc, char **argv, char **envp) {
             masterLog << "MASTER->WORKER: PREFIX_TASK_SEND ID:"<<pickedWorker<<" Length:"<<count<<"\n";
             MPI_Send(&buffer[0], count, MPI_CHAR, pickedWorker, START_PREFIX_TASK, MPI_COMM_WORLD);
             masterLog << "MASTER->WORKER: START_WORK ID:"<<pickedWorker<<"\n";
+            //pushing the worker busy list
+            busyList.push_back(pickedWorker);
           } 
           auto wrkr = busyList.front();
           busyList.pop_front();
