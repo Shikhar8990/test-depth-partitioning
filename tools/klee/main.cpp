@@ -1354,7 +1354,6 @@ void master(int argc, char **argv, char **envp) {
   MPI_Comm_size(MPI_COMM_WORLD, &num_cores);
   std::ofstream masterLog;
   masterLog.open("log_master_"+OutputDir);
-  //masterLog << "MASTER_START: "<<buf;
   masterLog << "MASTER_START \n";
 
   //*************Running Phase 1****************
@@ -1480,6 +1479,8 @@ void master(int argc, char **argv, char **envp) {
         //if all workers finish then shut down the system
         if(freeList.size() == (num_cores-2)) {
           masterLog << "MASTER_ELAPSED: \n";
+          time::Span elapsed_time2(time::getWallTime() - stTime);
+          masterLog << "Time: "<<elapsed_time2<<"\n";
           masterLog.close();
           MPI_Abort(MPI_COMM_WORLD, -1);
         }

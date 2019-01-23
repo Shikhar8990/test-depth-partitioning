@@ -3162,14 +3162,22 @@ ExecutionState* Executor::offLoad(bool &valid) {
     if(searcher->atleast2states()) {
       ExecutionState* resp = searcher->getState2Offload2();
       if(ENABLE_LOGGING) logFile << "Packet to Send: ";
-      //if(ENABLE_LOGGING) logFile.flush();
       if(dumpSingleFile) std::cout << "Packet to Send: ";
       std::vector<unsigned char> packet2send;
       pathWriter->readStream(getPathStreamID(*resp), packet2send);
-      printPath(packet2send, std::cout, "Offloading Path: ");
-      MPI_Send(&packet2send[0], packet2send.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
-      valid=true;
-      return resp;
+      if(packet2send.size() <= offloadThreshold) {
+        printPath(packet2send, std::cout, "Offloading Path: ");
+        MPI_Send(&packet2send[0], packet2send.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
+        valid=true;
+        return resp;
+      } 
+      else {
+        if(ENABLE_LOGGING) logFile<<"Nothing to Send\n";
+        std::vector<unsigned char> packet2send;
+        packet2send.push_back('x');
+        MPI_Send(&packet2send[0], packet2send.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
+        valid = false;
+      }
     } else {
       if(ENABLE_LOGGING) logFile<<"Nothing to Send\n";
       std::vector<unsigned char> packet2send;
@@ -3403,27 +3411,48 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
 
     checkMemoryUsage();
 
-    updateStates(&state);
     //check if there is atleast one state which has a depth less than 
     //that of the branch halt threshold
     if(enableBranchHalt) {
-      bool haltDuetoBranchLevel = true;
-      for (auto it = states.begin(); it != states.end(); ++it) {
+      //TODO this is a stupid hack when doing exploring till phase
+      //depth 2 I am trying to avoid the overhead of checking the
+      //termination depth for each state, I will knock out the states
+      //as the reach that depth, so that the active states vector
+      //remains tractable, assuming that final depth (phase2depth) will
+      //be more that 10 and phase1depth will be less than 10 so use 
+      //the old way when doing initial prefixes as the overhead wont be
+      //that crazy
+      //
+      //this is the initial prefix core so let it store the states
+      if(branchLevel2Halt < 7) {
+        bool haltDuetoBranchLevel = true;
+        for (auto it = states.begin(); it != states.end(); ++it) {
+          std::vector<unsigned char> pathTillNow;
+          pathWriter->readStream(getPathStreamID(**it), pathTillNow);
+          if(pathTillNow.size() < branchLevel2Halt) {
+            haltDuetoBranchLevel = false;
+            break;
+          }
+        }
+        if(haltDuetoBranchLevel) {
+          haltExecution = true;
+        }
+      } else {
+        //removing states that have reached the termination depth
         std::vector<unsigned char> pathTillNow;
-        pathWriter->readStream(getPathStreamID(**it), pathTillNow);
-        if(pathTillNow.size() < branchLevel2Halt) {
-          haltDuetoBranchLevel = false;
-          break;
+        pathWriter->readStream(getPathStreamID(state), pathTillNow);
+        if(pathTillNow.size() >= branchLevel2Halt) {
+          removedStates.push_back(&state);
         }
       }
-      if(haltDuetoBranchLevel) {
-        haltExecution = true;
-      }
-    }	
+    }
+
+    //movin the updateStates down the branch halt check, should be fine 
+    updateStates(&state);
 	}
     
 	//here empty out all the states into the worklist
-	if(enableBranchHalt && (branchLevel2Halt < 10)) {
+	if(enableBranchHalt && (branchLevel2Halt < 7)) {
   	for(auto it = states.begin(); it != states.end(); ++it) {
     	if((*it)->depth == branchLevel2Halt) {
      		addState2WorkList(**it);
@@ -4273,6 +4302,15 @@ void Executor::runFunctionAsMain2(Function *f,
          char **envp,
          std::deque<std::deque<unsigned char>> &workList_main) {
   if(explorationDepth > 0) {
+    
+    //here if the selected offloaded depth is longer than a
+    //certain fraction of the termination depth then lets 
+    //not even bother offloading
+    //offloadThreshold = (explorationDepth*3)/4;
+    offloadThreshold = explorationDepth;
+
+    //if(ENABLE_LOGGING) std::cout << "Offload Threshold: "<<offloadThreshold<<std::endl;
+
     runFunctionAsMain(f, argc, argv, envp, true);
     states.clear();
     workList_main = workList;
@@ -4295,7 +4333,7 @@ void Executor::runFunctionAsMain(Function *f,
   
   MemoryObject *argvMO = 0;
 
-	  //TODO : Clean up printing
+	//TODO : Clean up printing
   std::string mode="";
   if (branchLevelHalt)
     mode = "Branch Level Halt";

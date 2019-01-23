@@ -251,6 +251,9 @@ private:
   unsigned int pathPrefixId;
   
   unsigned int rangeCheckMode;
+
+  ///offload threshold
+  unsigned int offloadThreshold;
   
 
   /// When non-null a list of "seed" inputs which will be used to
