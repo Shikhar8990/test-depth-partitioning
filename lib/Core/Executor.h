@@ -431,7 +431,7 @@ private:
   /// a constraint and return the results. The input state is included
   /// as one of the results. Note that the output vector may included
   /// NULL pointers for states which were unable to be created.
-  void branch(ExecutionState &state, 
+  int branch(ExecutionState &state, 
               const std::vector< ref<Expr> > &conditions,
               std::vector<ExecutionState*> &result);
 

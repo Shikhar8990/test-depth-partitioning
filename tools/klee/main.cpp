@@ -1603,11 +1603,13 @@ void slave(int argc, char **argv, char **envp) {
       MPI_Send(&result, 1, MPI_CHAR, 0, FINISH, MPI_COMM_WORLD);
 
     } else if(status.MPI_TAG == NORMAL_TASK) {
-      std::cout << "Process: "<<world_rank<<" Normal Task" <<"\n";
+      std::cout << "Process: "<<world_rank<<" Normal Task "<<"Prefix Depth: "<<phase2Depth<<"\n";
       std::vector<unsigned char> recv_prefix;
       recv_prefix.resize(count);
       launchKleeInstance(world_rank, argc, argv, envp,
-        dummyworkList, recv_prefix, 0, NO_MODE, getNewSearch());
+        dummyworkList, recv_prefix, phase2Depth, NO_MODE, getNewSearch());
+      MPI_Send(&result, 1, MPI_CHAR, 0, FINISH, MPI_COMM_WORLD);
+
     } else if(status.MPI_TAG == START_RANGE_TASK) {
       std::vector<unsigned char> buffer;
       buffer.resize(count);

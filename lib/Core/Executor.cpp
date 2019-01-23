@@ -109,8 +109,8 @@
 #define MIN_STATES 2
 #define DECREMENT_INT 2
 
-#define ENABLE_LOGGING false
-#define ENABLE_DEBUG false
+#define ENABLE_LOGGING true
+#define ENABLE_DEBUG true
 
 #define dumpSingleFile false
 
@@ -790,7 +790,7 @@ void Executor::initializeGlobals(ExecutionState &state) {
   }
 }
 
-void Executor::branch(ExecutionState &state, 
+int Executor::branch(ExecutionState &state, 
                       const std::vector< ref<Expr> > &conditions,
                       std::vector<ExecutionState*> &result) {
   int size = 0;
@@ -885,8 +885,11 @@ void Executor::branch(ExecutionState &state,
 				if(ns) {
 				}
 				if(enableBranchHalt) {
-					if(explorationDepth == es->depth)
+					if(explorationDepth == es->depth) {
+            std::cout << "Here\n";
+            std::cout.flush();
 						break;
+          }
 				}
 			} else if(allowTrueBranch) {
 				es->pathOS << "0";
@@ -949,9 +952,12 @@ void Executor::branch(ExecutionState &state,
     }
   }
 
-  for (unsigned i=0; i<N; ++i)
-    if (result[i])
+  for (unsigned i=0; i<result.size(); ++i) {
+    if (result[i]) {
       addConstraint(*result[i], conditions[i]);
+    }
+  }
+  return result.size();
 }
 
 Executor::StatePair 
@@ -1606,7 +1612,6 @@ void Executor::executeGetValue(ExecutionState &state,
 
     std::vector<ExecutionState*> branches;
     branch(state, conditions, branches);
-    
     std::vector<ExecutionState*>::iterator bit = branches.begin();
     for (std::set< ref<Expr> >::iterator vit = values.begin(), 
            vie = values.end(); vit != vie; ++vit) {
@@ -2232,16 +2237,17 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
         conditions.push_back(branchTargets[*it]);
       }
       std::vector<ExecutionState*> branches;
-      branch(state, conditions, branches);
-
+      int size = branch(state, conditions, branches);
+      int x = 0;
       std::vector<ExecutionState*>::iterator bit = branches.begin();
       for (std::vector<BasicBlock *>::iterator it = bbOrder.begin(),
                                                ie = bbOrder.end();
            it != ie; ++it) {
         ExecutionState *es = *bit;
-        if (es)
+        if (es && (x<size))
           transferToBasicBlock(*it, bb, *es);
         ++bit;
+        ++x;
       }
     }
     break;
@@ -3388,7 +3394,7 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
   haltExecution = false;
   while (!states.empty() && !haltExecution) {
     ExecutionState &state = searcher->selectState();
-    if(ENABLE_LOGGING) printStatePath(state, std::cout, "Select path: ");
+    if(ENABLE_LOGGING) printStatePath(state, logFile, "Select path: ");
     KInstruction *ki = state.pc;
     stepInstruction(state);
 
@@ -3413,12 +3419,11 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
       if(haltDuetoBranchLevel) {
         haltExecution = true;
       }
-    }
-		
+    }	
 	}
     
 	//here empty out all the states into the worklist
-	if(enableBranchHalt) {
+	if(enableBranchHalt && (branchLevel2Halt < 10)) {
   	for(auto it = states.begin(); it != states.end(); ++it) {
     	if((*it)->depth == branchLevel2Halt) {
      		addState2WorkList(**it);
