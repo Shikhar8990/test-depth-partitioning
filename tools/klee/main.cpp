@@ -81,6 +81,7 @@ using namespace klee;
 #define NO_MODE 103
 
 #define OFFLOADING_ENABLE true
+#define ENABLE_CLEANUP true
 
 #define MASTER_NODE 0
 
@@ -1793,6 +1794,9 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
   //strftime(buf, sizeof(buf), "Started: %Y-%m-%d %H:%M:%S\n", localtime(&t[0]));
   //handler->getInfoStream() << buf;
   //handler->getInfoStream().flush();
+  //
+  std::string output_dir_file;
+  std::string pthfile;
 
   if (!ReplayKTestDir.empty() || !ReplayKTestFile.empty()) {
     assert(SeedOutFile.empty());
@@ -1924,9 +1928,10 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
     }
 
     interpreter->setSearchMode(searchMode);
-    interpreter->setPathFile(handler->getOutputDir()+"_pathFile_"+std::to_string(x));
+    pthfile = handler->getOutputDir()+"_pathFile_"+std::to_string(x);
+    interpreter->setPathFile(pthfile);
 
-    std::string output_dir_file = handler->getOutputDir();
+    output_dir_file = handler->getOutputDir();
     interpreter->setBrHistFile(output_dir_file+"_br_hist");
     interpreter->setErrorFile(errorFile);
     interpreter->setLogFile(output_dir_file+"_log_file");
@@ -2008,6 +2013,34 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
     llvm::errs().resetColor();
 
   handler->getInfoStream() << stats.str();
+
+  //remove the br_hist file path files log files and directory
+  if(ENABLE_CLEANUP) {
+    std::string brhist = output_dir_file+"_br_hist";
+    const char * c = brhist.c_str();
+    std::string logfile = output_dir_file+"_log_file";
+    const char * d = logfile.c_str();
+    const char * e = output_dir_file.c_str();
+    std::string pathfile = pthfile; 
+    const char * f = pthfile.c_str();
+    std::string a1 = output_dir_file+"/assembly.ll";
+    const char * a = a1.c_str();
+    std::string b1 = output_dir_file+"/info";
+    const char * b = b1.c_str();
+    std::string x1 = output_dir_file+"/messages.txt";
+    const char * x = x1.c_str();
+    std::string z1 = output_dir_file+"/warnings.txt";
+    const char * z = z1.c_str();
+    remove(c);
+    remove(d);
+    remove(f);
+    remove(a);
+    remove(b);
+    remove(x);
+    remove(z);
+    rmdir(e);
+    std::cout <<"Deleteing dir: "<<output_dir_file<<"\n";
+  }
   
   delete handler;
   mainModule = NULL;

@@ -109,8 +109,8 @@
 #define MIN_STATES 2
 #define DECREMENT_INT 2
 
-#define ENABLE_LOGGING true
-#define ENABLE_DEBUG true
+#define ENABLE_LOGGING false
+#define ENABLE_DEBUG false
 
 #define dumpSingleFile false
 
