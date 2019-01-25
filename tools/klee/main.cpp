@@ -1521,8 +1521,8 @@ void master(int argc, char **argv, char **envp) {
         MPI_Request offloadReq;
         MPI_Status offloadStatus;
         MPI_Send(&dummyVal, 1, MPI_INT, worker2offload, OFFLOAD, MPI_COMM_WORLD);
-        masterLog << "MASTER->WORKER: OFFLOAD_SENT ID:"<<worker2offload<<"\n";
-        masterLog.flush();
+        //masterLog << "MASTER->WORKER: OFFLOAD_SENT ID:"<<worker2offload<<"\n";
+        //masterLog.flush();
         //remove the worker from the offloadActiveList
         //for(auto it = offloadActiveList.begin(); it != offloadActiveList.end(); ++it) {
         //  if (*it == worker2offload) {
