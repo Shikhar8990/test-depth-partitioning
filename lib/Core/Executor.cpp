@@ -3157,7 +3157,22 @@ ExecutionState* Executor::offLoad(bool &valid) {
   if(dumpSingleFile) std::cout << "Offloading\n";
   if(ENABLE_LOGGING) logFile << "Offloading\n";
   valid=false;
-  if(searchMode == "DFS" || searchMode == "BFS" || searchMode == "RAND") {
+
+
+  int flag;
+  MPI_Status status;
+  MPI_Iprobe(MASTER_NODE, KILL, MPI_COMM_WORLD, &flag, &status);
+
+  if(flag) {
+    if(status.MPI_TAG == KILL) {
+      char dummyRecv;
+      MPI_Status status2;
+      MPI_Recv(&dummyRecv, 1, MPI_CHAR, MASTER_NODE, KILL, MPI_COMM_WORLD, &status2);
+      haltExecution = true;
+    }
+  }
+
+  if((searchMode == "DFS" || searchMode == "BFS" || searchMode == "RAND") && (!haltExecution)) {
 
     if(searcher->atleast2states()) {
       ExecutionState* resp = searcher->getState2Offload2();

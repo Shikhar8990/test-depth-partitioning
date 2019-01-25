@@ -1337,6 +1337,7 @@ void master(int argc, char **argv, char **envp) {
               << std::put_time(std::localtime(&startTime), "%Y-%m-%d %H:%M:%S")<<'\n';
     //handler->getInfoStream() << startInfo.str();
     //handler->getInfoStream().flush();
+    std::cout<< "Started: "<< std::put_time(std::localtime(&startTime), "%Y-%m-%d %H:%M:%S")<<'\n';
   }
 
   auto stTime = time::getWallTime();
@@ -1431,12 +1432,11 @@ void master(int argc, char **argv, char **envp) {
   
       char dummy;
       for(int x=2; x<num_cores; ++x) {
-          MPI_Send(&dummy, 1, MPI_CHAR, x, KILL, MPI_COMM_WORLD);
+        MPI_Send(&dummy, 1, MPI_CHAR, x, KILL, MPI_COMM_WORLD);
       }
     } 
   }
 
-  std::cout << "Done with all prefixes\n"; 
   masterLog << "MASTER: DONE_WITH_ALL_PREFIXES\n";
    
   //once done with the initial prefixes offload when a worker becomes free 
@@ -1521,8 +1521,8 @@ void master(int argc, char **argv, char **envp) {
         MPI_Request offloadReq;
         MPI_Status offloadStatus;
         MPI_Send(&dummyVal, 1, MPI_INT, worker2offload, OFFLOAD, MPI_COMM_WORLD);
-        //masterLog << "MASTER->WORKER: OFFLOAD_SENT ID:"<<worker2offload<<"\n";
-
+        masterLog << "MASTER->WORKER: OFFLOAD_SENT ID:"<<worker2offload<<"\n";
+        masterLog.flush();
         //remove the worker from the offloadActiveList
         //for(auto it = offloadActiveList.begin(); it != offloadActiveList.end(); ++it) {
         //  if (*it == worker2offload) {
