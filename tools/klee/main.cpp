@@ -81,7 +81,7 @@ using namespace klee;
 #define NO_MODE 103
 
 #define OFFLOADING_ENABLE true
-#define ENABLE_CLEANUP true
+#define ENABLE_CLEANUP false
 
 #define MASTER_NODE 0
 
@@ -1383,10 +1383,11 @@ void master(int argc, char **argv, char **envp) {
   //*************Seeding the slaves*************
   int currRank = 2;
   auto wListIt = workList.begin();
+  std::cout<<"Here\n";
   while(wListIt != workList.end()) {
     std::cout << "Starting worker: "<<currRank<<"\n";
     masterLog << "MASTER->WORKER: START_WORK ID:"<<currRank<<"\n";
-    MPI_Send(&((*wListIt)[0]), phase1Depth, MPI_CHAR, currRank, START_PREFIX_TASK, MPI_COMM_WORLD);
+    MPI_Send(&((*wListIt)[0]), (*wListIt).size(), MPI_CHAR, currRank, START_PREFIX_TASK, MPI_COMM_WORLD);
     busyList.push_back(currRank);
     wListIt = workList.erase(wListIt);
     ++currRank;
@@ -1418,7 +1419,7 @@ void master(int argc, char **argv, char **envp) {
          }
       }
       masterLog << "WORKER->MASTER: FINISH ID:"<<status.MPI_SOURCE<<"\n";
-      MPI_Send(&((*currPrefix)[0]), phase1Depth, MPI_CHAR, status.MPI_SOURCE, 
+      MPI_Send(&((*currPrefix)[0]), (*currPrefix).size(), MPI_CHAR, status.MPI_SOURCE, 
         START_PREFIX_TASK, MPI_COMM_WORLD);
       currPrefix = workList.erase(currPrefix);
       masterLog << "MASTER->WORKER: START_WORK ID:"<<status.MPI_SOURCE<<"\n";

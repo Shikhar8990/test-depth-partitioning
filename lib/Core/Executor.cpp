@@ -3412,7 +3412,6 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
 
   std::vector<ExecutionState *> newStates(states.begin(), states.end());
   searcher->update(0, newStates, std::vector<ExecutionState *>());
-
   branchLevel2Halt = explorationDepth;
   haltExecution = false;
   while (!states.empty() && !haltExecution) {
@@ -3425,33 +3424,13 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
     processTimers(&state, maxInstructionTime);
 
     checkMemoryUsage();
-
-    //check if there is atleast one state which has a depth less than 
-    //that of the branch halt threshold
-    if(enableBranchHalt) {
-      //TODO this is a stupid hack when doing exploring till phase
-      //depth 2 I am trying to avoid the overhead of checking the
-      //termination depth for each state, I will knock out the states
-      //as the reach that depth, so that the active states vector
-      //remains tractable, assuming that final depth (phase2depth) will
-      //be more that 10 and phase1depth will be less than 10 so use 
-      //the old way when doing initial prefixes as the overhead wont be
-      //that crazy
-      //
-      //this is the initial prefix core so let it store the states
-      if(branchLevel2Halt < 7) {
-        bool haltDuetoBranchLevel = true;
-        for (auto it = states.begin(); it != states.end(); ++it) {
-          std::vector<unsigned char> pathTillNow;
-          pathWriter->readStream(getPathStreamID(**it), pathTillNow);
-          if(pathTillNow.size() < branchLevel2Halt) {
-            haltDuetoBranchLevel = false;
-            break;
-          }
-        }
-        if(haltDuetoBranchLevel) {
-          haltExecution = true;
-        }
+		
+		if(enableBranchHalt) {
+    	if(branchLevel2Halt < 9) {
+      	if(states.size() >= branchLevel2Halt) {
+         	haltExecution = true;
+          std::cout << "Halting: "<<states.size()<<"\n";
+      	}
       } else {
         //removing states that have reached the termination depth
         std::vector<unsigned char> pathTillNow;
@@ -3460,18 +3439,17 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
           removedStates.push_back(&state);
         }
       }
-    }
-
-    //movin the updateStates down the branch halt check, should be fine 
+		}
     updateStates(&state);
 	}
     
 	//here empty out all the states into the worklist
-	if(enableBranchHalt && (branchLevel2Halt < 7)) {
+	if(enableBranchHalt && (branchLevel2Halt < 9)) {
   	for(auto it = states.begin(); it != states.end(); ++it) {
-    	if((*it)->depth == branchLevel2Halt) {
-     		addState2WorkList(**it);
-   		}
+    	//if((*it)->depth == branchLevel2Halt) {
+     	addState2WorkList(**it);
+      std::cout<<"Here1\n";
+   		//}
  		}		
 	}
 	 
