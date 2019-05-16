@@ -108,8 +108,11 @@ public:
   /// used for searchers to decide what paths to explore
   double weight;
 
-  /// @brief Exploration depth, i.e., number of times KLEE branched for this state
+  /// @brief dummy depth for test prefix
   unsigned depth;
+
+  /// @brief Exploration depth - number of times klee branched state
+  unsigned actDepth; 
 
   /// @brief History of complete path: represents branches taken to
   /// reach/create this state (both concrete and symbolic)

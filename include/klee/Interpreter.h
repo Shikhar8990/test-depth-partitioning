@@ -44,7 +44,7 @@ public:
 
   virtual void incPathsExplored() = 0;
 
-  virtual void processTestCase(const ExecutionState &state,
+  virtual unsigned processTestCase(const ExecutionState &state,
                                const char *err,
                                const char *suffix) = 0;
 };
@@ -122,6 +122,10 @@ public:
   // interpretation down a user specified path. use null to reset.
   virtual void setReplayKTest(const struct KTest *out) = 0;
 
+  virtual void setPrefixKTest(const struct KTest *out, std::string &testName) = 0;
+
+  virtual void setTestPrefixDepth(unsigned inPD) = 0;
+
   virtual void setExplorationDepth(const int inExplorationDepth) = 0;
 
   // supply a list of branch decisions specifying which direction to
@@ -143,10 +147,8 @@ public:
                                   int argc,
                                   char **argv,
                                   char **envp,
-                                  std::deque<std::deque<unsigned char>> &workList) = 0;
+                                  std::deque<std::string> &workList_main)=0;
 
-  virtual void setUpperBound(std::vector<unsigned char> path) = 0;
-  virtual void setLowerBound(std::vector<unsigned char> path) = 0;
   virtual void setPathFile(std::string inPath) = 0;
   virtual void enableRangeChecking() = 0;
   virtual void enablePrefixChecking() = 0;
@@ -154,9 +156,11 @@ public:
   virtual void setSearchMode(std::string inSearchMode) = 0;
   virtual void setBrHistFile(std::string inBrHistFile) = 0;
   virtual void setLogFile(std::string inLogFile) = 0;
+  virtual void setOutputDir(std::string inOutputDir) = 0;
   virtual void setErrorFile(std::string inErrorFile) = 0;
   virtual void setRangeCheckMode(unsigned int modeId);
   virtual void setErrorPair(std::pair <std::string, unsigned int> inErrPair) = 0;
+  virtual void initializeTestInputData(std::vector<std::pair<std::string, std::vector<unsigned char>>> &testInputs);
 
   /*** Runtime options ***/
 

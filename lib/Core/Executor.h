@@ -21,6 +21,7 @@
 #include "klee/Internal/Module/KInstruction.h"
 #include "klee/Internal/Module/KModule.h"
 #include "klee/Internal/System/Time.h"
+#include "klee/util/Assignment.h"
 #include "klee/util/ArrayCache.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -211,6 +212,14 @@ private:
   /// object.
   unsigned replayPosition;
 
+  ///the test to replay when using it as a prefix
+  const struct KTest *prefixTest;
+
+  std::string prefixTestName;
+
+  ///prefix depth
+  unsigned prefixDepth;
+
   // The depth to which to explore, use only with BFS search
   unsigned int explorationDepth;
   unsigned int branchLevel2Halt;
@@ -229,9 +238,15 @@ private:
   
   /// errorFile
   std::string errorFile;
+
+  /// output dir
+  std::string outputDir;
   
   /// path file
   std::string treepathFile;
+
+  /// coreId
+  int coreId;
   
   /// enable my debug prints
   bool shikharDebug;
@@ -247,8 +262,6 @@ private:
   
   ///number of states to explore 
   unsigned int numStates2Explore;
-  
-  unsigned int pathPrefixId;
   
   unsigned int rangeCheckMode;
 
@@ -291,13 +304,18 @@ private:
   //each element in the worklist is a vector which contains the halted branch
   //histories
   std::deque<std::deque<unsigned char>> workList;
+
+  ///worklist which contains a pair <testId,depth of test id>
+  std::deque<std::vector<std::pair<std::string, std::vector<unsigned char>>>> workListTest;
+
+  ///test names worklist
+  std::deque<std::string> workListTestName;
   
-  std::vector<unsigned char> pathPrefix;
-  std::vector<unsigned char> upperBound;
-  std::vector<unsigned char> lowerBound;
   std::vector<unsigned char> lastTestPath;
 
   std::pair<std::string, unsigned int> errPair;
+
+  std::vector<std::pair<std::string, std::vector<unsigned char>>> testInputs;
   
   /// Maximum time to allow for a single instruction.
   time::Span maxInstructionTime;
@@ -316,6 +334,11 @@ private:
 
   /// Optimizes expressions
   ExprOptimizer optimizer;
+
+  ///prefix test data
+  std::vector<const Array*> testObjects;
+  std::vector<std::vector<unsigned char>> testValues;
+  Assignment testAssign;
 
   llvm::Function* getTargetFunction(llvm::Value *calledVal,
                                     ExecutionState &state);
@@ -352,8 +375,13 @@ private:
   bool updateCurrentUpperBound(std::vector<unsigned char> inPath);
   bool updateCurrentLowerBound(std::vector<unsigned char> inPath);
   bool addState2WorkList(ExecutionState &state);
-  ExecutionState* offLoad(bool &valid);
+  bool addTest2WorkList(ExecutionState &state);
+  bool addTestName2WorkList(ExecutionState &state);
+  //ExecutionState* offLoad(bool &valid);
+  ExecutionState* offloadFromStatesVector(bool &valid);
   void check2Offload();
+  void initializePrefixTestData();
+  virtual void initializeTestInputData(std::vector<std::pair<std::string, std::vector<unsigned char>>> &testInputs);
 
   void callExternalFunction(ExecutionState &state,
                             KInstruction *target,
@@ -594,6 +622,16 @@ public:
     replayPosition = 0;
   }
 
+  virtual void setPrefixKTest(const struct KTest *out, std::string &testName) {
+    prefixTest = out;
+    prefixTestName = testName;
+    initializePrefixTestData();
+  }
+
+  virtual void setTestPrefixDepth(unsigned inPD) {
+    prefixDepth = inPD;
+  }
+
   void setReplayPath(const std::vector<bool> *path) override {
     assert(!replayKTest && "cannot replay both buffer and path");
     replayPath = path;
@@ -601,21 +639,25 @@ public:
   }
 
   virtual void setExplorationDepth(const int inExplorationDepth) {
-      explorationDepth = inExplorationDepth;
+    explorationDepth = inExplorationDepth;
   }
 
   virtual void setBrHistFile(std::string inBrHistFile) {
-      brhistFileName = inBrHistFile;
-        brhistFile.open(brhistFileName);
+    brhistFileName = inBrHistFile;
+    brhistFile.open(brhistFileName);
   }
 
   virtual void setErrorFile(std::string inErrorFile) {
-      errorFile = inErrorFile;
+    errorFile = inErrorFile;
   }
 
   virtual void setLogFile(std::string inLogFile) {
-      logFileName = inLogFile;
-      logFile.open(logFileName);
+    logFileName = inLogFile;
+    logFile.open(logFileName);
+  }
+
+  virtual void setOutputDir(std::string inOutputDir) {
+    outputDir = inOutputDir;
   }
 
   llvm::Module *setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
@@ -629,8 +671,6 @@ public:
     errPair = inerrPair;
   }
 
-  virtual void setUpperBound(std::vector<unsigned char> path);
-	virtual void setLowerBound(std::vector<unsigned char> path);
 	virtual void enableRangeChecking() {
 		enableRanging = true;
 	}
@@ -665,7 +705,7 @@ public:
    	      	                     int argc,
     	                           char **argv,
       	                         char **envp,
-        	                       std::deque<std::deque<unsigned char>> &workList);
+        	                       std::deque<std::string> &workListTestName);
   
   /*** Runtime options ***/
 

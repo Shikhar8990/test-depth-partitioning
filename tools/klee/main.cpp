@@ -80,7 +80,7 @@ using namespace klee;
 #define RANGE_MODE 102
 #define NO_MODE 103
 
-#define OFFLOADING_ENABLE true
+#define OFFLOADING_ENABLE false
 #define ENABLE_CLEANUP false
 
 #define MASTER_NODE 0
@@ -89,13 +89,6 @@ enum searchMode{
   DFS,
   BFS,
   RAND
-};
-
-enum rangeCheckMode {
-  CLOSE_CLOSE=1,
-  CLOSE_OPEN=2,
-  OPEN_CLOSE=3,
-  OPEN_OPEN=4
 };
 
 namespace klee {
@@ -275,11 +268,11 @@ namespace {
                  cl::value_desc("policy name"),
                  cl::init("DFS"));
 
-  cl::opt<std::string>
-  offloadPolicy("offloadPolicy",
-                 cl::desc("policy name"),
-                 cl::value_desc("policy name"),
-                 cl::init("DEFAULT"));
+	cl::opt<std::string>
+	Mode("mode",
+		  cl::desc("offload using tests or prefixes"),
+			cl::value_desc("same"),
+			cl::init("test"));
 
   cl::list<std::string>
   SeedOutFile("seed-out");
@@ -301,7 +294,8 @@ namespace {
 
   cl::opt<unsigned>
   StopAfterNTests("stop-after-n-tests",
-	     cl::desc("Stop execution after generating the given number of tests.  Extra tests corresponding to partially explored paths will also be dumped."),
+	     cl::desc("Stop execution after generating the given number of tests."
+         "Extra tests corresponding to partially explored paths will also be dumped."),
 	     cl::init(0));
 
   cl::opt<bool>
@@ -346,7 +340,7 @@ public:
 
   std::string getOutputDir();
 
-  void processTestCase(const ExecutionState  &state,
+  unsigned processTestCase(const ExecutionState  &state,
                        const char *errorMessage,
                        const char *errorSuffix);
 
@@ -508,13 +502,12 @@ KleeHandler::openTestFile(const std::string &suffix,
 
 
 /* Outputs all files (.ktest, .kquery, .cov etc.) describing a test case */
-void KleeHandler::processTestCase(const ExecutionState &state,
+unsigned KleeHandler::processTestCase(const ExecutionState &state,
                                   const char *errorMessage,
                                   const char *errorSuffix) {
   if (!NoOutput) {
     std::vector< std::pair<std::string, std::vector<unsigned char> > > out;
     bool success = m_interpreter->getSymbolicSolution(state, out);
-    //std::cout << "SS_processTestCase: Symbolic Solution " << std::endl;
 
     if (!success)
       klee_warning("unable to get symbolic solution, losing test case");
@@ -531,18 +524,15 @@ void KleeHandler::processTestCase(const ExecutionState &state,
       b.symArgvs = 0;
       b.symArgvLen = 0;
       b.numObjects = out.size();
-      //std::cout << "SS_processTestCase: Num Objects " << b.numObjects << std::endl;
       b.objects = new KTestObject[b.numObjects];
       assert(b.objects);
       for (unsigned i=0; i<b.numObjects; i++) {
         KTestObject *o = &b.objects[i];
         o->name = const_cast<char*>(out[i].first.c_str());
-        //std::cout << "SS_processTestCase: Variable " << o->name << std::endl;
         o->numBytes = out[i].second.size();
         o->bytes = new unsigned char[o->numBytes];
         assert(o->bytes);
         std::copy(out[i].second.begin(), out[i].second.end(), o->bytes);
-        //std::cout << "SS_processTestCase: Values- " << int((out[0].second)[0]) << std::endl;
       }
       if (!kTest_toFile(&b, getOutputFilename(getTestFilename("ktest", id)).c_str())) {
         klee_warning("unable to write output test case, losing it");
@@ -634,12 +624,16 @@ void KleeHandler::processTestCase(const ExecutionState &state,
       *f << "Time to generate test case: "
          << elapsed_time << "s\n";
     }
+
+    return id;
   }
   
   if (errorMessage && OptExitOnError) {
     m_interpreter->prepareForEarlyExit();
     klee_error("EXITING ON ERROR:\n%s\n", errorMessage);
   }
+
+  return 0;
 }
 
   // load a .path file
@@ -1202,9 +1196,9 @@ bool parseNameLineOption(
 }
 
 int launchKleeInstance(int x, int argc, char **argv, char **envp,
-                        std::deque<std::deque<unsigned char>> &workList,
-                        std::vector<unsigned char> &prefix, int explorationDepth=0, 
-                        int mode=NO_MODE, std::string searchMode="DFS");
+    std::deque<std::string> &workList,
+    std::vector<unsigned char> &prefix, 
+    int explorationDepth=0, int mode=NO_MODE, std::string searchMode="BFS");
 void master(int argc, char **argv, char **envp);
 void slave(int argc, char **argv, char **envp);
 
@@ -1327,6 +1321,18 @@ std::string getNewSearch() {
   }
 }
 
+void mpi_pack_data(std::vector<std::pair<std::string, std::vector<unsigned char>>> &testInput, 
+    std::vector<unsigned char> &mpipkt) {
+  for(int x=0; x<testInput.size(); x++) {
+    std::string objName = testInput[x].first;
+    //std::vector<unsigned char> nameVec(objName.begin(), objName.end());
+    std::copy(objName.begin(), objName.end(), std::back_inserter(mpipkt));
+    mpipkt.push_back('-');
+    mpipkt.insert(mpipkt.end(), testInput[x].second.begin(), testInput[x].second.end());
+
+  }
+}
+
 
 void master(int argc, char **argv, char **envp) {
   auto startTime = std::time(nullptr);
@@ -1342,16 +1348,19 @@ void master(int argc, char **argv, char **envp) {
 
   auto stTime = time::getWallTime();
 
-  std::deque<std::deque<unsigned char>> workList;
+  typedef std::vector<std::pair<std::string, std::vector<unsigned char>>> testPacket;
+
+  //std::deque<std::deque<unsigned char>> workList;
+  //std::deque<std::vector<std::pair<std::string, std::vector<unsigned char>>>> workList;
+  std::deque<std::string> workList;
+  //std::vector<std::pair<std::string, std::vector<unsigned char>>> dummyprefix;
   std::vector<unsigned char> dummyprefix;
-  std::deque<unsigned char> dummyWL;
   std::deque<unsigned int> freeList;
   std::deque<unsigned int> offloadActiveList;
   std::deque<unsigned int> busyList;
   MPI_Status status;
   MPI_Status status1;
   MPI_Status status2;
-  dummyWL.resize(phase1Depth);
   int num_cores;
   MPI_Comm_size(MPI_COMM_WORLD, &num_cores);
   std::ofstream masterLog;
@@ -1360,7 +1369,7 @@ void master(int argc, char **argv, char **envp) {
 
   //*************Running Phase 1****************
   if(phase1Depth != 0) { 
-    launchKleeInstance(0, argc, argv, envp, workList, dummyprefix, phase1Depth, NO_MODE, "BFS");
+    launchKleeInstance(0, argc, argv, envp, workList, dummyprefix, phase1Depth, NO_MODE, "DFS");
   } else { //single core mode, just get a worker to launck a normal klee instance, only to be 
     //used with 3 cores
     char dummychar;
@@ -1383,8 +1392,7 @@ void master(int argc, char **argv, char **envp) {
   //*************Seeding the slaves*************
   int currRank = 2;
   auto wListIt = workList.begin();
-  std::cout<<"Here\n";
-  while(wListIt != workList.end()) {
+  while(wListIt != workList.end() && currRank<num_cores) {
     std::cout << "Starting worker: "<<currRank<<"\n";
     masterLog << "MASTER->WORKER: START_WORK ID:"<<currRank<<"\n";
     MPI_Send(&((*wListIt)[0]), (*wListIt).size(), MPI_CHAR, currRank, START_PREFIX_TASK, MPI_COMM_WORLD);
@@ -1578,7 +1586,7 @@ void slave(int argc, char **argv, char **envp) {
   int world_rank;
   MPI_Status status;
   char result;
-  std::deque<std::deque<unsigned char>> dummyworkList;
+  std::deque<std::string> dummyworkList;
   while(true) {
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
     //trying to check the TAG of incoming message
@@ -1594,35 +1602,22 @@ void slave(int argc, char **argv, char **envp) {
       return;
 
     } else if(status.MPI_TAG == START_PREFIX_TASK) {
-      std::vector<unsigned char> recv_prefix;
-      recv_prefix.resize(count);
-      MPI_Recv(&recv_prefix[0], count, MPI_CHAR, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+      //std::vector<std::pair<std::string, std::vector<unsigned char>>> recvTest;
+      std::vector<unsigned char> recvTest;
+      recvTest.resize(count);
+      MPI_Recv(&recvTest[0], count, MPI_CHAR, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
       std::cout << "Process: "<<world_rank<<" Prefix Task: Length:"<<count<<"\n";
-      for(unsigned int x=0;x<recv_prefix.size();x++) std::cout<<recv_prefix[x];
-      std::cout<<"\n";
       launchKleeInstance(world_rank, argc, argv, envp, 
-        dummyworkList, recv_prefix, phase2Depth, PREFIX_MODE, getNewSearch());
+        dummyworkList, recvTest, phase2Depth, PREFIX_MODE, getNewSearch());
       std::cout << "Finish: " << world_rank << "\n";
       MPI_Send(&result, 1, MPI_CHAR, 0, FINISH, MPI_COMM_WORLD);
 
     } else if(status.MPI_TAG == NORMAL_TASK) {
       std::cout << "Process: "<<world_rank<<" Normal Task "<<"Prefix Depth: "<<phase2Depth<<"\n";
-      std::vector<unsigned char> recv_prefix;
-      recv_prefix.resize(count);
+      std::vector<unsigned char> recvTest;
+      recvTest.resize(count);
       launchKleeInstance(world_rank, argc, argv, envp,
-        dummyworkList, recv_prefix, phase2Depth, NO_MODE, getNewSearch());
-      MPI_Send(&result, 1, MPI_CHAR, 0, FINISH, MPI_COMM_WORLD);
-
-    } else if(status.MPI_TAG == START_RANGE_TASK) {
-      std::vector<unsigned char> buffer;
-      buffer.resize(count);
-      MPI_Recv(&buffer[0], count, MPI_CHAR, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-      std::cout << "Process: "<<world_rank<<" Range Task: Length:"<<count<<"\n";
-      for(int x=0; x<count; x++)
-        std::cout <<buffer[x];
-      std::cout<<"\n";
-        launchKleeInstance(world_rank, argc, argv, envp, 
-          dummyworkList, buffer, phase2Depth, RANGE_MODE, getNewSearch());
+        dummyworkList, recvTest, phase2Depth, NO_MODE, getNewSearch());
       MPI_Send(&result, 1, MPI_CHAR, 0, FINISH, MPI_COMM_WORLD);
 
     } else if(status.MPI_TAG == OFFLOAD) {
@@ -1637,9 +1632,9 @@ void slave(int argc, char **argv, char **envp) {
 }
 
 int launchKleeInstance(int x, int argc, char **argv, char **envp,
-                        std::deque<std::deque<unsigned char>> &workList,
-                        std::vector<unsigned char> &prefix, int explorationDepth, 
-                        int mode, std::string searchMode) {
+    std::deque<std::string> &workList,
+    std::vector<unsigned char> &prefix, 
+    int explorationDepth, int mode, std::string searchMode) {
 
 	// Load the bytecode...
 	std::string errorMsg;
@@ -1781,13 +1776,66 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
   	klee_error("Entry function '%s' not found in module.", EntryPoint.c_str());
 	}
 
-
 	externalsAndGlobalsCheck(finalModule);
+  
+	int world_rank;
+  MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+  std::string output_dir_file;
+  std::string pthfile;
 
+  if(explorationDepth != 0) {
+    interpreter->setExplorationDepth(explorationDepth);
+  }
+
+  if(mode == PREFIX_MODE) {
+		std::string pktest(prefix.begin(), prefix.end());
+    std::cout << "Prefixed Received: "<<pktest<<"\n";
+		
+		char *pch;
+		pch = strtok(&pktest[0], ",");
+		int count = 0;
+		while(pch!=NULL) {
+			std::string ff(pch);
+			std::cout<<ff<<"\n";
+			if(count == 0) {
+				KTest *out = kTest_fromFile(ff.c_str());
+				if (out) {
+  				interpreter->setPrefixKTest(out, ff);
+				} else {
+  				klee_warning("unable to open: %s\n", ff);
+				}
+			} else {
+				interpreter->setTestPrefixDepth(std::stoi(ff));	
+			}
+			++count;
+			pch = strtok(NULL, ",");
+		}
+  } 
+  
+	if(ErrorLocation != "none") {
+    std::string fname;
+    unsigned int line;
+    if(parseNameLineOption(ErrorLocation, fname, line)) {
+      interpreter->setErrorPair(std::make_pair(fname, line));
+    } else {
+      klee_error("INVALID Error Location Arguments");
+    }
+  }
+
+	interpreter->setSearchMode(searchMode);
+
+	output_dir_file = handler->getOutputDir();
+	interpreter->setBrHistFile(output_dir_file+"_br_hist");
+	interpreter->setErrorFile(errorFile);
+	interpreter->setLogFile(output_dir_file+"_log_file");
+  interpreter->setOutputDir(output_dir_file);
 
   if (ReplayPathFile != "") {
     interpreter->setReplayPath(&replayPath);
   }
+  
+  pthfile = handler->getOutputDir()+"_pathFile_"+std::to_string(x);
+  interpreter->setPathFile(pthfile);
   
   //char buf[256];
   //time_t t[2];
@@ -1795,9 +1843,6 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
   //strftime(buf, sizeof(buf), "Started: %Y-%m-%d %H:%M:%S\n", localtime(&t[0]));
   //handler->getInfoStream() << buf;
   //handler->getInfoStream().flush();
-  //
-  std::string output_dir_file;
-  std::string pthfile;
 
   if (!ReplayKTestDir.empty() || !ReplayKTestFile.empty()) {
     assert(SeedOutFile.empty());
@@ -1888,7 +1933,7 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
       }
     }
 
-    if(explorationDepth != 0) {
+    /*if(explorationDepth != 0) {
       interpreter->setExplorationDepth(explorationDepth);
     }
 
@@ -1897,26 +1942,7 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
       interpreter->setLowerBound(prefix);
       interpreter->enablePrefixChecking();
       interpreter->enableRangeChecking();
-    } else if(mode == RANGE_MODE) {
-      std::vector<unsigned char> upBound;
-      std::vector<unsigned char> loBound;
-      bool founddash = false;
-      for(int x=0; x<prefix.size(); x++) {
-        if(prefix[x] == '-') {
-          founddash = true;
-          continue;
-        }
-        if(!founddash) {
-          loBound.push_back(prefix[x]);
-        } else {
-          upBound.push_back(prefix[x]);
-        }
-      }
-      interpreter->setUpperBound(upBound);
-      interpreter->setLowerBound(loBound);
-      interpreter->setRangeCheckMode(CLOSE_CLOSE);
-      interpreter->enableRangeChecking();
-    }
+    } 
 
     if(ErrorLocation != "none") {
       std::string fname;
@@ -1935,11 +1961,26 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
     output_dir_file = handler->getOutputDir();
     interpreter->setBrHistFile(output_dir_file+"_br_hist");
     interpreter->setErrorFile(errorFile);
-    interpreter->setLogFile(output_dir_file+"_log_file");
-    int world_rank;
-    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-    //std::cout<<"DMap World Rank: "<<world_rank<<" File: " <<output_dir_file<<"\n";
+    interpreter->setLogFile(output_dir_file+"_log_file");*/
 
+   	/*std::vector<std::string> kTestFiles = ReplayKTestFile;
+		std::cout << "KTest File: "<<kTestFiles[0] << std::endl;
+		for (std::vector<std::string>::iterator
+   		it = ReplayKTestDir.begin(), ie = ReplayKTestDir.end();
+  		it != ie; ++it)
+ 	 		KleeHandler::getKTestFilesInDir(*it, kTestFiles);
+		for (std::vector<std::string>::iterator
+  		it = kTestFiles.begin(), ie = kTestFiles.end();
+  		it != ie; ++it) {
+  		//std::cout << "Test DDD: "<<it->c_str()<<std::endl;
+  		KTest *out = kTest_fromFile(it->c_str());
+  		if (out) {
+    		interpreter->setPrefixKTest(out);
+  		} else {
+    		klee_warning("unable to open: %s\n", (*it).c_str());
+  		}
+		}*/
+ 
     interpreter->runFunctionAsMain2(mainFn, pArgc, pArgv, pEnvp, workList);
 
     while (!seeds.empty()) {

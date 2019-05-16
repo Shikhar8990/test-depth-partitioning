@@ -160,16 +160,16 @@ void BFSSearcher::update(ExecutionState *current,
     if (mit == depthMap.end()) {
       //if the state doesnt exist for some reason just put it 
       //in and update it
-      depthMap[current] = current->depth;
+      depthMap[current] = current->actDepth;
       insertIntoDepthStateMap(current);
       //std::cout << "YT Inserting State "<<current<<" at depth "<<current->depth<<"\n";
     } else {
       //if it exists and the depth has changed, if yes update it
-      if (depthMap[current] != current->depth) {
+      if (depthMap[current] != current->actDepth) {
         //std::cout << "YT Updating State "<<current<<" from depth "<<depthMap[current]
         //          << " to depth " << current->depth<<"\n";
         updateDepthStateMap(current, depthMap[current]);
-        depthMap[current] = current->depth;
+        depthMap[current] = current->actDepth;
       } 
     } 
   } 
@@ -187,7 +187,7 @@ void BFSSearcher::update(ExecutionState *current,
 } 
 
 void BFSSearcher::insertIntoDepthStateMap(ExecutionState* current) {
-  int depth = current->depth;
+  int depth = current->actDepth;
   depthMap[current] = depth;
   if(depthStatesMap.find(depth) == depthStatesMap.end()) {
     std::deque<ExecutionState*> newListofStates;
@@ -202,7 +202,7 @@ void BFSSearcher::insertIntoDepthStateMap(ExecutionState* current) {
 }
 
 void BFSSearcher::removeFromDepthStateMap(ExecutionState* current) {
-  int depth = current->depth;
+  int depth = current->actDepth;
   assert(depthStatesMap.find(depth) != depthStatesMap.end());
   auto listofStates = depthStatesMap[depth];
   auto it = std::find(listofStates.begin(), listofStates.end(), current);
@@ -224,7 +224,7 @@ void BFSSearcher::removeFromDepthStateMap(ExecutionState* current) {
 }
 
 void BFSSearcher::updateDepthStateMap(ExecutionState* current, int oldDepth) {
-  int newDepth = current->depth;
+  int newDepth = current->actDepth;
   assert(depthStatesMap.find(oldDepth) != depthStatesMap.end());
   //erase from the old list
   auto listofStates = depthStatesMap[oldDepth];

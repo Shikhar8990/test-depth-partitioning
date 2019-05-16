@@ -13,6 +13,7 @@
 #include "klee/Expr.h"
 #include "klee/Solver.h"
 #include "klee/Internal/System/Time.h"
+#include "klee/util/Assignment.h"
 
 #include <vector>
 
@@ -47,7 +48,8 @@ namespace klee {
       return solver->getConstraintLog(query);
     }
 
-    bool evaluate(const ExecutionState&, ref<Expr>, Solver::Validity &result);
+    bool evaluate(const ExecutionState&, ref<Expr>, Solver::Validity &result, 
+        Assignment *testAssign = NULL, bool useTest=false);
 
     bool mustBeTrue(const ExecutionState&, ref<Expr>, bool &result);
 

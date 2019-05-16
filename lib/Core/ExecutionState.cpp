@@ -68,6 +68,7 @@ ExecutionState::ExecutionState(KFunction *kf) :
 
     weight(1),
     depth(0),
+    actDepth(0),
 
     instsSinceCovNew(0),
     coveredNew(false),
@@ -111,6 +112,7 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     queryCost(state.queryCost),
     weight(state.weight),
     depth(state.depth),
+    actDepth(state.actDepth),
 
     pathOS(state.pathOS),
     symPathOS(state.symPathOS),
@@ -134,6 +136,7 @@ ExecutionState::ExecutionState(const ExecutionState& state):
 
 ExecutionState *ExecutionState::branch() {
   depth++;
+  actDepth++;
 
   ExecutionState *falseState = new ExecutionState(*this);
   falseState->coveredNew = false;

@@ -23,14 +23,12 @@
 #include "UserSearcher.h"
 #include "ExecutorTimerInfo.h"
 
-
 #include "klee/ExecutionState.h"
 #include "klee/Expr.h"
 #include "klee/Interpreter.h"
 #include "klee/TimerStatIncrementer.h"
 #include "klee/SolverCmdLine.h"
 #include "klee/Common.h"
-#include "klee/util/Assignment.h"
 #include "klee/util/ExprPPrinter.h"
 #include "klee/util/ExprSMTLIBPrinter.h"
 #include "klee/util/ExprUtil.h"
@@ -109,7 +107,7 @@
 #define MIN_STATES 2
 #define DECREMENT_INT 2
 
-#define ENABLE_LOGGING false
+#define ENABLE_LOGGING true
 #define ENABLE_DEBUG false
 
 #define dumpSingleFile false
@@ -455,6 +453,10 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
 
   this->solver = new TimingSolver(solver, EqualitySubstitution);
   memory = new MemoryManager(&arrayCache);
+
+  prefixDepth=0;
+
+  MPI_Comm_rank(MPI_COMM_WORLD, &coreId);
 
   initializeSearchOptions();
 
@@ -815,46 +817,43 @@ int Executor::branch(ExecutionState &state,
 		//addConstraint(state, conditions[0]);
 		for (unsigned i=1; i<N; ++i) {
 			ExecutionState *es = result[(result.size()-1)];
-			//check if the branch is allowed
 			std::vector<unsigned char> pathTillNow;
-			pathWriter->readStream(getPathStreamID(*es), pathTillNow);
-			if(ENABLE_DEBUG) {
+			//check if the branch is allowed
+			/*if(ENABLE_DEBUG) {
+			  pathWriter->readStream(getPathStreamID(*es), pathTillNow);
 				std::cout << "Switch Case\n";
 				std::cout << "Path Till Now: ";
 				for (auto I = pathTillNow.begin(); I != pathTillNow.end(); ++I) {
 						std::cout << *I;
 				}
 				std::cout << "\n";
-			}
+			}*/
 
 			bool allowFalseBranch=true;
 			bool allowTrueBranch=true;
-
-			//making and checking the feasibility of true path
-			pathTillNow.push_back('0');
-			allowTrueBranch = !checkRange(pathTillNow);
-			//making and check range the feasibility of false path
-			pathTillNow.pop_back();
-			pathTillNow.push_back('1');
-			allowFalseBranch = !checkRange(pathTillNow);
-			if(false) {
-				if(allowTrueBranch)
-					if(ENABLE_LOGGING) logFile << "RangeCheckSw: Allowing the true branch \n";
-				else
-					if(ENABLE_LOGGING) logFile << "RangeCheckSw: Denying the true branch \n";
-				if(allowFalseBranch)
-					if(ENABLE_LOGGING) logFile << "RangeCheckSw: Allowing the false branch \n";
-				else
-					if(ENABLE_LOGGING) logFile << "RangeCheckSw: Denying the false branch \n";
-				pathTillNow.pop_back();
-			}
+      if(enablePathPrefixFilter) {
+        //making and checking the feasibility of true path
+        pathTillNow.push_back('0');
+        allowTrueBranch = !checkRange(pathTillNow);
+        //making and check range the feasibility of false path
+        pathTillNow.pop_back();
+        pathTillNow.push_back('1');
+        allowFalseBranch = !checkRange(pathTillNow);
+        if(false) {
+          if(allowTrueBranch)
+            if(ENABLE_LOGGING) logFile << "RangeCheckSw: Allowing the true branch \n";
+          else
+            if(ENABLE_LOGGING) logFile << "RangeCheckSw: Denying the true branch \n";
+          if(allowFalseBranch)
+            if(ENABLE_LOGGING) logFile << "RangeCheckSw: Allowing the false branch \n";
+          else
+            if(ENABLE_LOGGING) logFile << "RangeCheckSw: Denying the false branch \n";
+          pathTillNow.pop_back();
+        }
+      }
 
 			if(allowTrueBranch&&allowFalseBranch) {
 				ExecutionState *ns = es->branch();
-				if(false) {
-					std::cout << "New State: ";
-					std::cout << ns << std::endl;
-				}
 				addedStates.push_back(ns);
 				//addedStates.insert(addedStates.begin(), ns);
 				result.push_back(ns);
@@ -885,8 +884,7 @@ int Executor::branch(ExecutionState &state,
 				if(ns) {
 				}
 				if(enableBranchHalt) {
-					if(explorationDepth == es->depth) {
-            std::cout << "Here\n";
+					if(branchLevel2Halt == es->actDepth) {
             std::cout.flush();
 						break;
           }
@@ -997,13 +995,35 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
   time::Span timeout = coreSolverTimeout;
   if (isSeeding)
     timeout *= it->second.size();
-  solver->setTimeout(timeout);
-  bool success = solver->evaluate(current, condition, res);
-  solver->setTimeout(time::Span());
-  if (!success) {
-    current.pc = current.prevPC;
-    terminateStateEarly(current, "Query timed out (fork).");
-    return StatePair(0, 0);
+
+  if(coreId == 0) {
+  //if(true) {
+    solver->setTimeout(timeout);
+    bool success = solver->evaluate(current, condition, res);
+    solver->setTimeout(time::Span());
+    if (!success) {
+      current.pc = current.prevPC;
+      terminateStateEarly(current, "Query timed out (fork).");
+      return StatePair(0, 0);
+    }
+  } else {
+    if((current.depth < prefixDepth) && (prefixDepth!=0)) {
+      ref<Expr> testRef = testAssign.evaluate(condition);
+      if (ConstantExpr *CE = dyn_cast<ConstantExpr>(testRef)) {
+        res = CE->isTrue() ? Solver::True : Solver::False;
+      } else {
+        assert(false);//should not be a non-constant expression
+      }
+    } else {
+      solver->setTimeout(timeout);
+      bool success = solver->evaluate(current, condition, res);
+      solver->setTimeout(time::Span());
+      if (!success) {
+        current.pc = current.prevPC; 
+        terminateStateEarly(current, "Query timed out (fork).");
+        return StatePair(0, 0);
+      }
+    }
   }
 
   if (!isSeeding) {
@@ -1034,14 +1054,14 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
           inhibitForking || 
           (MaxForks!=~0u && stats::forks >= MaxForks)) {
 
-	if (MaxMemoryInhibit && atMemoryLimit)
-	  klee_warning_once(0, "skipping fork (memory cap exceeded)");
-	else if (current.forkDisabled)
-	  klee_warning_once(0, "skipping fork (fork disabled on current path)");
-	else if (inhibitForking)
-	  klee_warning_once(0, "skipping fork (fork disabled globally)");
-	else 
-	  klee_warning_once(0, "skipping fork (max-forks reached)");
+	      if (MaxMemoryInhibit && atMemoryLimit)
+	        klee_warning_once(0, "skipping fork (memory cap exceeded)");
+	      else if (current.forkDisabled)
+	        klee_warning_once(0, "skipping fork (fork disabled on current path)");
+	      else if (inhibitForking)
+	        klee_warning_once(0, "skipping fork (fork disabled globally)");
+	      else 
+	        klee_warning_once(0, "skipping fork (max-forks reached)");
 
         TimerStatIncrementer timer(stats::forkTime);
         if (theRNG.getBool()) {
@@ -1094,37 +1114,37 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
   // hint to just use the single constraint instead of all the binary
   // search ones. If that makes sense.
 
-	//Getting the branch id here
-	std::vector<unsigned char> pathTillNow;
-	pathWriter->readStream(getPathStreamID(current), pathTillNow);
-	if(ENABLE_DEBUG) {
-  	std::cout << "Path Till Now: ";
-  	for (auto I = pathTillNow.begin(); I != pathTillNow.end(); ++I) {
-    	std::cout << *I;
-  	}
-  	std::cout << "\n";
-	}
-
   if (res==Solver::True) {
 		if(ENABLE_DEBUG) std::cout<<"Always True\n";
     if (!isInternal) {
       if (pathWriter) {
-        //current.pathOS << "1";
+        current.pathOS << "0";
       }
     }
-
+    current.depth++;
     return StatePair(&current, 0);
+
   } else if (res==Solver::False) {
 		if(ENABLE_DEBUG) std::cout<<"Always False\n";
     if (!isInternal) {
       if (pathWriter) {
-        //current.pathOS << "0";
+        current.pathOS << "1";
       }
     }
-
+    current.depth++;
     return StatePair(0, &current);
+
   } else {
 		if(enableRanging || enablePathPrefixFilter) {
+	    std::vector<unsigned char> pathTillNow;
+  	  pathWriter->readStream(getPathStreamID(current), pathTillNow);
+	    if(ENABLE_DEBUG) {
+  	    std::cout << "Path Till Now: ";
+  	    for (auto I = pathTillNow.begin(); I != pathTillNow.end(); ++I) {
+    	    std::cout << *I;
+  	    }
+  	    std::cout << "\n";
+	    }
 
 			bool allowFalseBranch=true;
 			bool allowTrueBranch=true;
@@ -1207,15 +1227,15 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
 				// is used for both falseState and trueState.
 					falseState->pathOS = pathWriter->open(current.pathOS);
 					if (!isInternal) {
-						trueState->pathOS << "1";
-						falseState->pathOS << "0";
+						trueState->pathOS << "0";
+						falseState->pathOS << "1";
 					}
 				}
 				if (symPathWriter) {
 					falseState->symPathOS = symPathWriter->open(current.symPathOS);
 					if (!isInternal) {
-						trueState->symPathOS << "1";
-						falseState->symPathOS << "0";
+						trueState->symPathOS << "0";
+						falseState->symPathOS << "1";
 					}
 				}
 
@@ -1263,18 +1283,11 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
 				if (pathWriter) {
 					if (!isInternal) {
 						trueState->pathOS << "0";
-						//std::vector<unsigned char> concreteBranches;
-						//pathWriter->readStream(getPathStreamID(*trueState), concreteBranches);
-						//for (auto I = concreteBranches.begin(); I != concreteBranches.end(); ++I) {
-							//std::cout << *I << "\n";
-						//}
-						//int sum = convertPath2Number(concreteBranches);
-						//std::cout << "BranchId: " << sum <<"\n";
 					}
 				}
 				if (symPathWriter) {
 					if (!isInternal) {
-						trueState->symPathOS << "1";
+						trueState->symPathOS << "0";
 					}
 				}
 
@@ -1326,19 +1339,11 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
 						falseState->pathOS = pathWriter->open(current.pathOS);
 						if (!isInternal) {
 							falseState->pathOS << "1";
-
-							//std::vector<unsigned char> concreteBranches2;
-							//pathWriter->readStream(getPathStreamID(*falseState), concreteBranches2);
-							//for (auto I = concreteBranches2.begin(); I != concreteBranches2.end(); ++I) {
-							//  std::cout << *I << "\n";
-							//}
-							//int sum = convertPath2Number(concreteBranches2);
-							//std::cout << "BranchId: " << sum <<"\n";
 						}
 					}
 					if (symPathWriter) {
 						if (!isInternal) {
-							falseState->symPathOS << "0";
+							falseState->symPathOS << "1";
 						}
 					}
 
@@ -1444,12 +1449,6 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
 
 			addConstraint(*trueState, condition);
 			addConstraint(*falseState, Expr::createIsZero(condition));
-
-
-			if(false) {
-				std::cout <<"Depth: ";
-				std::cout << trueState->depth<<std::endl;
-			}
 
 			// Kinda gross, do we even really still want this option?
 			if (MaxDepth && MaxDepth<=trueState->depth) {
@@ -2030,7 +2029,10 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     break;
   }
   case Instruction::Br: {
+    //std::cout << "HEREBRANCH\n";
     BranchInst *bi = cast<BranchInst>(i);
+    //i->dump();
+    //std::cout.flush();
     if (bi->isUnconditional()) {
       transferToBasicBlock(bi->getSuccessor(0), bi->getParent(), state);
     } else {
@@ -2133,6 +2135,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     SwitchInst *si = cast<SwitchInst>(i);
     ref<Expr> cond = eval(ki, 0, state).value;
     BasicBlock *bb = si->getParent();
+    //if(ENABLE_LOGGING) std::cout << "SWITCH ins\n";
 
     cond = toUnique(state, cond);
     if (ConstantExpr *CE = dyn_cast<ConstantExpr>(cond)) {
@@ -2174,80 +2177,170 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
 
       // Track default branch values
       ref<Expr> defaultValue = ConstantExpr::alloc(1, Expr::Bool);
+      
+      //fork all the cases when you are the master node or when we have
+      //exceeded the depth to which to do the prefix ranging
+      if((state.depth >= prefixDepth)|| coreId==0) { 
+        if(ENABLE_LOGGING) {
+          logFile << "Not Ranging using tests at depth: "<<state.depth<<"\n";
+          logFile.flush();
+        }
+        // iterate through all non-default cases but in order of the expressions
+        for (std::map<ref<Expr>, BasicBlock *>::iterator
+                 it = expressionOrder.begin(),
+                 itE = expressionOrder.end();
+             it != itE; ++it) {
+          ref<Expr> match = EqExpr::create(cond, it->first);
 
-      // iterate through all non-default cases but in order of the expressions
-      for (std::map<ref<Expr>, BasicBlock *>::iterator
-               it = expressionOrder.begin(),
-               itE = expressionOrder.end();
-           it != itE; ++it) {
-        ref<Expr> match = EqExpr::create(cond, it->first);
+          // Make sure that the default value does not contain this target's value
+          defaultValue = AndExpr::create(defaultValue, Expr::createIsZero(match));
 
-        // Make sure that the default value does not contain this target's value
-        defaultValue = AndExpr::create(defaultValue, Expr::createIsZero(match));
+          // Check if control flow could take this case
+          bool result;
+          match = optimizer.optimizeExpr(match, false);
+          bool success = solver->mayBeTrue(state, match, result);
+          assert(success && "FIXME: Unhandled solver failure");
+          (void) success;
+          if (result) {
+            BasicBlock *caseSuccessor = it->second;
 
-        // Check if control flow could take this case
-        bool result;
-        match = optimizer.optimizeExpr(match, false);
-        bool success = solver->mayBeTrue(state, match, result);
-        assert(success && "FIXME: Unhandled solver failure");
-        (void) success;
-        if (result) {
-          BasicBlock *caseSuccessor = it->second;
+            // Handle the case that a basic block might be the target of multiple
+            // switch cases.
+            // Currently we generate an expression containing all switch-case
+            // values for the same target basic block. We spare us forking too
+            // many times but we generate more complex condition expressions
+            // TODO Add option to allow to choose between those behaviors
+            std::pair<std::map<BasicBlock *, ref<Expr> >::iterator, bool> res =
+                branchTargets.insert(std::make_pair(
+                    caseSuccessor, ConstantExpr::alloc(0, Expr::Bool)));
 
-          // Handle the case that a basic block might be the target of multiple
-          // switch cases.
-          // Currently we generate an expression containing all switch-case
-          // values for the same target basic block. We spare us forking too
-          // many times but we generate more complex condition expressions
-          // TODO Add option to allow to choose between those behaviors
-          std::pair<std::map<BasicBlock *, ref<Expr> >::iterator, bool> res =
-              branchTargets.insert(std::make_pair(
-                  caseSuccessor, ConstantExpr::alloc(0, Expr::Bool)));
+            res.first->second = OrExpr::create(match, res.first->second);
 
-          res.first->second = OrExpr::create(match, res.first->second);
-
-          // Only add basic blocks which have not been target of a branch yet
-          if (res.second) {
-            bbOrder.push_back(caseSuccessor);
+            // Only add basic blocks which have not been target of a branch yet
+            if (res.second) {
+              bbOrder.push_back(caseSuccessor);
+            }
           }
         }
-      }
 
-      // Check if control could take the default case
-      defaultValue = optimizer.optimizeExpr(defaultValue, false);
-      bool res;
-      bool success = solver->mayBeTrue(state, defaultValue, res);
-      assert(success && "FIXME: Unhandled solver failure");
-      (void) success;
-      if (res) {
-        std::pair<std::map<BasicBlock *, ref<Expr> >::iterator, bool> ret =
-            branchTargets.insert(
-                std::make_pair(si->getDefaultDest(), defaultValue));
-        if (ret.second) {
-          bbOrder.push_back(si->getDefaultDest());
+        // Check if control could take the default case
+        defaultValue = optimizer.optimizeExpr(defaultValue, false);
+        bool res;
+        bool success = solver->mayBeTrue(state, defaultValue, res);
+        assert(success && "FIXME: Unhandled solver failure");
+        (void) success;
+        if (res) {
+          std::pair<std::map<BasicBlock *, ref<Expr> >::iterator, bool> ret =
+              branchTargets.insert(
+                  std::make_pair(si->getDefaultDest(), defaultValue));
+          if (ret.second) {
+            bbOrder.push_back(si->getDefaultDest());
+          }
         }
-      }
 
-      // Fork the current state with each state having one of the possible
-      // successors of this switch
-      std::vector< ref<Expr> > conditions;
-      for (std::vector<BasicBlock *>::iterator it = bbOrder.begin(),
-                                               ie = bbOrder.end();
-           it != ie; ++it) {
-        conditions.push_back(branchTargets[*it]);
-      }
-      std::vector<ExecutionState*> branches;
-      int size = branch(state, conditions, branches);
-      int x = 0;
-      std::vector<ExecutionState*>::iterator bit = branches.begin();
-      for (std::vector<BasicBlock *>::iterator it = bbOrder.begin(),
-                                               ie = bbOrder.end();
-           it != ie; ++it) {
-        ExecutionState *es = *bit;
-        if (es && (x<size))
-          transferToBasicBlock(*it, bb, *es);
-        ++bit;
-        ++x;
+        // Fork the current state with each state having one of the possible
+        // successors of this switch
+        std::vector< ref<Expr> > conditions;
+        for (std::vector<BasicBlock *>::iterator it = bbOrder.begin(),
+                                                 ie = bbOrder.end();
+             it != ie; ++it) {
+          conditions.push_back(branchTargets[*it]);
+        }
+        std::vector<ExecutionState*> branches;
+        int size = branch(state, conditions, branches);
+        int x = 0;
+        std::vector<ExecutionState*>::iterator bit = branches.begin();
+        for (std::vector<BasicBlock *>::iterator it = bbOrder.begin(),
+                                                 ie = bbOrder.end();
+             it != ie; ++it) {
+          ExecutionState *es = *bit;
+          if (es && (x<size))
+            transferToBasicBlock(*it, bb, *es);
+          ++bit;
+          ++x;
+        }
+      } else {
+        if(ENABLE_LOGGING) logFile << "Ranging using tests at depth: "<<state.depth<<"\n";
+				bool nonDefaultCaseFound = false;
+				// iterate through all non-default cases but in order of the expressions
+				for (std::map<ref<Expr>, BasicBlock *>::iterator
+				 				it = expressionOrder.begin(),
+				 				itE = expressionOrder.end();
+				 		it != itE; ++it) {
+				  ref<Expr> match = EqExpr::create(cond, it->first);
+
+				 	state.depth++; 
+					// Make sure that the default value does not contain this target's value
+				  defaultValue = AndExpr::create(defaultValue, Expr::createIsZero(match));
+
+				  // Check if control flow could take this case
+				  match = optimizer.optimizeExpr(match, false);
+							
+					Solver::Validity res;	
+					ref<Expr> testRef = testAssign.evaluate(match);
+					if (ConstantExpr *CE = dyn_cast<ConstantExpr>(testRef)) {
+  					res = CE->isTrue() ? Solver::True : Solver::False;
+						if(res == Solver::True) {
+              if(ENABLE_LOGGING) logFile << "Found a satisfying switch: "<<state.depth<<"\n";
+							nonDefaultCaseFound = true;
+
+							BasicBlock *caseSuccessor = it->second;
+
+							std::pair<std::map<BasicBlock *, ref<Expr> >::iterator, bool> res =
+    					branchTargets.insert(std::make_pair(
+										caseSuccessor, ConstantExpr::alloc(0, Expr::Bool)));
+
+							res.first->second = OrExpr::create(match, res.first->second);
+
+							// Only add basic blocks which have not been target of a branch yet
+							if (res.second) {
+ 								bbOrder.push_back(caseSuccessor);
+							}
+							state.addConstraint(res.first->second);
+
+							if (pathWriter) {
+  							state.pathOS << "0";
+							}
+				      transferToBasicBlock(caseSuccessor, bb, state);
+              break;
+						} else {
+              if(ENABLE_LOGGING) logFile << "Not Found a satisfying switch: "<<state.depth<<"\n";
+							if (pathWriter) {
+  							state.pathOS << "1";
+							}
+						}
+					} else {
+  					assert(false);//should not be a non-constant expression
+					}
+				} 
+
+				if(!nonDefaultCaseFound) {
+					// Check if control could take the default case
+          //has to take the default case
+          if(ENABLE_LOGGING) logFile << "Have to take the default case \n"; 
+				  transferToBasicBlock(si->getDefaultDest(), bb, state);
+          break;
+					/*defaultValue = optimizer.optimizeExpr(defaultValue, false);
+
+					Solver::Validity res;	
+					ref<Expr> testRef = testAssign.evaluate(defaultValue);
+					if (ConstantExpr *CE = dyn_cast<ConstantExpr>(defaultValue)) {
+						res = CE->isTrue() ? Solver::True : Solver::False;
+						if(res == Solver::True) {
+							state.addConstraint(defaultValue);
+              if(ENABLE_LOGGING) logFile << "Found default switch\n";
+				      transferToBasicBlock(si->getDefaultDest(), bb, state);
+              break;
+						} else {
+							assert(false); //none of the cases including default cases match match
+						}
+					} else {
+            std::cout << "TestRefdump: \n";
+            testRef->dump();
+            std::cout.flush();
+						assert(false);//should not be a non-constant expression
+					}*/
+				}
       }
     }
     break;
@@ -3079,7 +3172,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
   }
 }
 
-void Executor::check2Offload() {
+/*void Executor::check2Offload() {
   int tag, flag;
   MPI_Status status;
   MPI_Iprobe(MASTER_NODE, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
@@ -3093,7 +3186,6 @@ void Executor::check2Offload() {
       if(ENABLE_LOGGING) logFile << "Offload Request\n";
       bool valid;
       ExecutionState* state2Remove = offLoad(valid);
-      //if(ENABLE_LOGGING) logFile.flush();
       if(valid) {
         bool foundState=false;
         for(auto it=removedStates.begin(); it!=removedStates.end(); ++it) {
@@ -3110,6 +3202,44 @@ void Executor::check2Offload() {
       char dummyRecv;
       MPI_Status status2;
       MPI_Recv(&dummyRecv, 1, MPI_CHAR, MASTER_NODE, KILL, MPI_COMM_WORLD, &status2);
+      haltExecution = true;
+    }
+  }
+}*/
+
+void Executor::check2Offload() {
+  int flag;
+  MPI_Status status;
+  MPI_Iprobe(MASTER_NODE, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
+  waiting4OffloadReq = true;
+  if(flag) {
+    if(status.MPI_TAG == OFFLOAD) {
+      int count, buffer;
+      MPI_Get_count(&status, MPI_INT, &count);
+      MPI_Recv(&buffer, count, MPI_INT, MASTER_NODE, OFFLOAD, MPI_COMM_WORLD, &status);
+      if(ENABLE_LOGGING) logFile << "Offload Request\n";
+      bool valid;
+      ExecutionState* state2Remove = offloadFromStatesVector(valid);
+
+      if(valid) {
+      
+        //create a test from the test
+        unsigned tId = interpreterHandler->processTestCase(*state2Remove, "offload", "offload");
+        std::stringstream filename;
+        filename << "test" << std::setfill('0') << std::setw(6) << tId << ".ktest";
+        std::string testName = outputDir+"/"+filename.str()+","+std::to_string((*state2Remove).depth);
+        if(ENABLE_LOGGING) logFile << "Offloading\n";
+        if(ENABLE_LOGGING) logFile << "Packet to Send: "<<testName<<"\n";
+        MPI_Send(&testName[0], testName.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
+        terminateState(*state2Remove);
+      } else {
+        std::string dummyTest = "x";
+        MPI_Send(&dummyTest[0], dummyTest.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
+      }
+      waiting4OffloadReq = false;
+    } else if(status.MPI_TAG == KILL) {
+      char dummyRecv;
+      MPI_Recv(&dummyRecv, 1, MPI_CHAR, MASTER_NODE, KILL, MPI_COMM_WORLD, &status);
       haltExecution = true;
     }
   }
@@ -3152,12 +3282,33 @@ void Executor::updateStates(ExecutionState *current) {
   }
 }
 
-ExecutionState* Executor::offLoad(bool &valid) {
+ExecutionState* Executor::offloadFromStatesVector(bool &valid) {
+  valid = false;
+  if(haltExecution) return NULL;
+  if(states.size() > 1) {
+    //look for the first non recovery and non suspended state
+    for(auto it=states.begin(); it!=states.end(); ++it) {
+      bool isRemoved=false;
+      for(auto it2=removedStates.begin(); it2!=removedStates.end(); ++it2) {
+        if(*it == *it2) {
+          isRemoved=true;
+          break;
+        }
+      }
+      if(isRemoved)
+        continue;
+      valid = true;
+      return *it;
+    }
+  }
+  return NULL;
+}
+
+/*ExecutionState* Executor::offLoad(bool &valid) {
 
   if(dumpSingleFile) std::cout << "Offloading\n";
   if(ENABLE_LOGGING) logFile << "Offloading\n";
   valid=false;
-
 
   int flag;
   MPI_Status status;
@@ -3202,9 +3353,7 @@ ExecutionState* Executor::offLoad(bool &valid) {
     }
 	}
 	if(ENABLE_LOGGING) logFile.flush();
-}
-
-
+}*/
 
 template <typename TypeIt>
 void Executor::computeOffsets(KGEPInstruction *kgepi, TypeIt ib, TypeIt ie) {
@@ -3416,7 +3565,8 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
   haltExecution = false;
   while (!states.empty() && !haltExecution) {
     ExecutionState &state = searcher->selectState();
-    if(ENABLE_LOGGING) printStatePath(state, logFile, "Select path: ");
+    if(ENABLE_LOGGING) logFile<<"State Depth:"<<state.actDepth<<"\n";
+    //if(ENABLE_LOGGING) printStatePath(state, logFile, "Select path: ");
     KInstruction *ki = state.pc;
     stepInstruction(state);
 
@@ -3426,17 +3576,22 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
     checkMemoryUsage();
 		
 		if(enableBranchHalt) {
-    	if(branchLevel2Halt < 9) {
+    	if(coreId==0) {
       	if(states.size() >= branchLevel2Halt) {
+          if(states.size() > branchLevel2Halt) {
+            std::cout << "States size: "<<states.size() << " "<<branchLevel2Halt<<"\n";
+            assert(false); //seeing if I hit this case
+          }
          	haltExecution = true;
-          std::cout << "Halting: "<<states.size()<<"\n";
       	}
       } else {
         //removing states that have reached the termination depth
-        std::vector<unsigned char> pathTillNow;
-        pathWriter->readStream(getPathStreamID(state), pathTillNow);
-        if(pathTillNow.size() >= branchLevel2Halt) {
-          removedStates.push_back(&state);
+        //std::vector<unsigned char> pathTillNow;
+        //pathWriter->readStream(getPathStreamID(state), pathTillNow);
+        //if(pathTillNow.size() >= branchLevel2Halt) {
+        if(state.actDepth >= branchLevel2Halt) {
+          terminateStateEarly(state, "branchHalt");
+          //removedStates.push_back(&state);
         }
       }
 		}
@@ -3444,12 +3599,11 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
 	}
     
 	//here empty out all the states into the worklist
-	if(enableBranchHalt && (branchLevel2Halt < 9)) {
+	if(enableBranchHalt && (coreId==0)) {
   	for(auto it = states.begin(); it != states.end(); ++it) {
-    	//if((*it)->depth == branchLevel2Halt) {
-     	addState2WorkList(**it);
-      std::cout<<"Here1\n";
-   		//}
+     	//addState2WorkList(**it);
+      //addTest2WorkList(**it);
+      addTestName2WorkList(**it);
  		}		
 	}
 	 
@@ -3458,7 +3612,29 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
   delete searcher;
   searcher = 0;
 
-  doDumpStates();
+  //doDumpStates();
+}
+
+bool Executor::addTestName2WorkList(ExecutionState &state) {
+  //for(auto it = states.begin(); it != states.end(); ++it) {
+  unsigned tId = interpreterHandler->processTestCase(state, "early", "early"); 
+  std::stringstream filename;
+  filename << "test" << std::setfill('0') << std::setw(6) << tId << ".ktest";
+  std::string testName = outputDir+"/"+filename.str()+","+std::to_string(state.depth);
+  //std::cout << "FULLTstName: "<<testName<<"\n";
+  //}
+  workListTestName.push_back(testName);
+}
+
+bool Executor::addTest2WorkList(ExecutionState &state) {
+  std::vector<std::pair<std::string, std::vector<unsigned char>>> out;
+  bool success = getSymbolicSolution(state, out);
+  if (!success) {
+    klee_warning("unable to get symbolic solution, losing test case");
+    return false;
+  }
+  workListTest.push_back(out);
+  return true;
 }
 
 bool Executor::addState2WorkList(ExecutionState &state) {
@@ -3588,16 +3764,16 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
   if (!OnlyOutputStatesCoveringNew || state.coveredNew || 
       (AlwaysOutputSeeds && seedMap.count(&state)))
     interpreterHandler->processTestCase(state, 0, 0);
-    if(dumpSingleFile) std::cout << "Branch History: ";
-    lastTestPath.clear();
-    pathWriter->readStream(getPathStreamID(state), lastTestPath);
-    for (auto I = lastTestPath.begin(); I != lastTestPath.end(); ++I) {
-      if(dumpSingleFile) std::cout << *I;
-      if(ENABLE_LOGGING) brhistFile << *I;
-    }
-    if(ENABLE_LOGGING) brhistFile << "\n";
-    if(dumpSingleFile) std::cout << "\n";
-    if(ENABLE_LOGGING) brhistFile.flush();
+  if(dumpSingleFile) std::cout << "Branch History: ";
+  lastTestPath.clear();
+  if(ENABLE_LOGGING) {
+    //pathWriter->readStream(getPathStreamID(state), lastTestPath);
+    //for (auto I = lastTestPath.begin(); I != lastTestPath.end(); ++I) {
+    //  brhistFile << *I;
+    //}
+    //brhistFile << "\n";
+    //brhistFile.flush();
+  }
   terminateState(state);
 }
 
@@ -4251,11 +4427,11 @@ void Executor::executeMakeSymbolic(ExecutionState &state,
               ((!(AllowSeedExtension || ZeroSeedExtension)
                 && obj->numBytes < mo->size) ||
                (!AllowSeedTruncation && obj->numBytes > mo->size))) {
-	    std::stringstream msg;
-	    msg << "replace size mismatch: "
-		<< mo->name << "[" << mo->size << "]"
-		<< " vs " << obj->name << "[" << obj->numBytes << "]"
-		<< " in test\n";
+	          std::stringstream msg;
+	          msg << "replace size mismatch: "
+		          << mo->name << "[" << mo->size << "]"
+		          << " vs " << obj->name << "[" << obj->numBytes << "]"
+		          << " in test\n";
 
             terminateStateOnError(state, msg.str(), User);
             break;
@@ -4293,7 +4469,7 @@ void Executor::runFunctionAsMain2(Function *f,
          int argc,
          char **argv,
          char **envp,
-         std::deque<std::deque<unsigned char>> &workList_main) {
+         std::deque<std::string> &workList_main) {
   if(explorationDepth > 0) {
     
     //here if the selected offloaded depth is longer than a
@@ -4306,7 +4482,7 @@ void Executor::runFunctionAsMain2(Function *f,
 
     runFunctionAsMain(f, argc, argv, envp, true);
     states.clear();
-    workList_main = workList;
+    workList_main = workListTestName;
   }
   else {
     runFunctionAsMain(f, argc, argv, envp);
@@ -4319,7 +4495,6 @@ void Executor::runFunctionAsMain(Function *f,
 				 char **envp,
 				 bool branchLevelHalt) {
   std::vector<ref<Expr> > arguments;
-	pathPrefixId = 0;
   // force deterministic initialization of memory objects
   srand(1);
   srandom(1);
@@ -4327,52 +4502,19 @@ void Executor::runFunctionAsMain(Function *f,
   MemoryObject *argvMO = 0;
 
 	//TODO : Clean up printing
-  std::string mode="";
-  if (branchLevelHalt)
-    mode = "Branch Level Halt";
-  if(enablePathPrefixFilter)
-    mode = "Path Prefix";
-  if(branchLevelHalt&&enablePathPrefixFilter)
-    mode = "Branch Level Halt with Path Prefix";
-  if(enableRanging)
-    mode = mode + " Ranging";
-  if(dumpSingleFile) std::cout<<"Search Strategy: "<<searchMode<<"\n";
-  if(ENABLE_LOGGING) logFile<<"Search Strategy: "<<searchMode<<"\n";
-  if(dumpSingleFile) std::cout<<"Execution Mode: "<<mode<<"\n";
-  if(ENABLE_LOGGING) logFile << "Execution Mode: "<<mode<<"\n";
-  if(enablePathPrefixFilter) {
-    if(dumpSingleFile) std::cout<<"Executing Prefix: ";
-    if(ENABLE_LOGGING) logFile<<"Executing Prefix: ";
-    for(auto it = pathPrefix.begin(); it != pathPrefix.end(); ++it) {
-      if(dumpSingleFile) std::cout<<*it;
-      if(ENABLE_LOGGING) logFile<<*it;
-    }
-    if(dumpSingleFile) std::cout<<"\n";
-    if(ENABLE_LOGGING) logFile<<"\n";
-  }
-  if(branchLevelHalt)
-    if(ENABLE_LOGGING) logFile<<"Branch Level to Halt: "<<branchLevel2Halt<<" "
-															<<explorationDepth<<"\n";
-  if(enableRanging) {
-    if(dumpSingleFile) std::cout << "Executing Range:\n";
-    else if(ENABLE_LOGGING) logFile<<"Executing Range: \n";
-    if(dumpSingleFile) std::cout << "Upper Bound: ";
-    else if(ENABLE_LOGGING) logFile << "Upper Bound: ";
-    for(auto it = upperBound.begin(); it != upperBound.end(); ++it) {
-      if(dumpSingleFile) std::cout<<*it;
-      if(ENABLE_LOGGING) logFile<<*it;
-    }
-    if(dumpSingleFile) std::cout<<"\n";
-    if(ENABLE_LOGGING) logFile<<"\n";
-
-    if(dumpSingleFile) std::cout << "Lower Bound: ";
-    else if(ENABLE_LOGGING) logFile << "Lower Bound: ";
-    for(auto it = lowerBound.begin(); it != lowerBound.end(); ++it) {
-      if(dumpSingleFile) std::cout<<*it;
-      if(ENABLE_LOGGING) logFile<<*it;
-    }
-    if(dumpSingleFile) std::cout<<"\n";
-    if(ENABLE_LOGGING) logFile<<"\n";
+  if(ENABLE_LOGGING) {
+    std::string mode="";
+    std::string tname;
+    if (branchLevelHalt)
+      mode = "Branch Level Halt";
+    else if(enablePathPrefixFilter)
+      mode = "Path Prefix";
+    else if(branchLevelHalt&&enablePathPrefixFilter)
+      mode = "Branch Level Halt with Path Prefix";
+    logFile<<"Search Strategy: "<<searchMode<<"\n";
+    logFile<< "Execution Mode: "<<mode<<"\n";
+    logFile<<"Branch Level to Halt: "<<branchLevel2Halt<<" "<<explorationDepth<<"\n";
+    logFile<<"TestName:Prefix(if prefix mode): "<<prefixTestName<<":"<<prefixDepth<<"\n";
   }
 
   // In order to make uclibc happy and be closer to what the system is
@@ -4688,6 +4830,36 @@ void Executor::prepareForEarlyExit() {
   }
 }
 
+void Executor::initializePrefixTestData() {
+  int numObjects = prefixTest->numObjects;
+  if(ENABLE_LOGGING) std::cout << "Num objects: "<<numObjects<<"\n";
+  for(int x=0; x < numObjects; x++) {
+    KTestObject obj = prefixTest->objects[x];
+    std::string objName(obj.name);
+    if(ENABLE_LOGGING) std::cout << "Object Name: "<<objName<<" Size:"
+      <<obj.numBytes<<"\n";
+    const Array* arr = arrayCache.CreateArray(objName, obj.numBytes);
+    testObjects.push_back(arr);
+    std::vector<unsigned char> objVal;
+    for(int y=0; y<obj.numBytes; y++) {
+      objVal.push_back(obj.bytes[y]);
+    }
+    testValues.push_back(objVal);
+  }
+  testAssign = Assignment(testObjects, testValues, false);
+}
+
+void Executor::initializeTestInputData(std::vector<std::pair<std::string, std::vector<unsigned char>>> &testInputs) {
+  for(auto it=testInputs.begin(); it!=testInputs.end(); ++it) {
+    std::string objName = (*it).first;
+    int objNumBytes = (*it).second.size();
+    const Array* arr = arrayCache.CreateArray(objName, objNumBytes);
+    testObjects.push_back(arr);
+    testValues.push_back((*it).second);
+  }
+  testAssign = Assignment(testObjects, testValues, false);
+}
+
 int Executor::convertPath2Number(std::vector<unsigned char> inPath, int upto) {
   int limit = (upto==0)?(inPath.size()-1):(upto-1);
   int sum = 0;
@@ -4759,20 +4931,8 @@ bool Executor::checkRange(std::vector<unsigned char> inPath) {
   if(ENABLE_LOGGING) logFile << "\n";
 
   if(enablePathPrefixFilter) {
-    int minLen = std::min(inPath.size(), upperBound.size());
-    if (convertPath2Number(inPath, minLen) != convertPath2Number(upperBound, minLen)) {
-      violatePrefix = true;
-    }
   }
   return (violatePrefix);
-}
-
-void Executor::setUpperBound(std::vector<unsigned char> path) {
-  upperBound = path;
-}
-
-void Executor::setLowerBound(std::vector<unsigned char> path) {
-  lowerBound = path;
 }
 
 //adding a utility to print paths

@@ -23,8 +23,8 @@ using namespace llvm;
 /***/
 
 bool TimingSolver::evaluate(const ExecutionState& state, ref<Expr> expr,
-                            Solver::Validity &result) {
-  // Fast path, to avoid timer and OS overhead.
+                            Solver::Validity &result, Assignment* testAssign,
+                            bool useTest) {
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(expr)) {
     result = CE->isTrue() ? Solver::True : Solver::False;
     return true;
@@ -38,7 +38,7 @@ bool TimingSolver::evaluate(const ExecutionState& state, ref<Expr> expr,
   bool success = solver->evaluate(Query(state.constraints, expr), result);
 
   state.queryCost += timer.check();
-
+  
   return success;
 }
 
