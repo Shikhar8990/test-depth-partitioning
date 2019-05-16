@@ -3563,9 +3563,13 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
   searcher->update(0, newStates, std::vector<ExecutionState *>());
   branchLevel2Halt = explorationDepth;
   haltExecution = false;
+  int prev_statedepth=0;
   while (!states.empty() && !haltExecution) {
     ExecutionState &state = searcher->selectState();
-    if(ENABLE_LOGGING) logFile<<"State Depth:"<<state.actDepth<<"\n";
+    if(ENABLE_LOGGING && (prev_statedepth!=state.actDepth)) {
+      logFile<<"State Depth:"<<state.actDepth<<"\n";
+      prev_statedepth = state.actDepth;
+    }
     //if(ENABLE_LOGGING) printStatePath(state, logFile, "Select path: ");
     KInstruction *ki = state.pc;
     stepInstruction(state);
