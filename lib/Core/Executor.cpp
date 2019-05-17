@@ -795,7 +795,6 @@ void Executor::initializeGlobals(ExecutionState &state) {
 int Executor::branch(ExecutionState &state, 
                       const std::vector< ref<Expr> > &conditions,
                       std::vector<ExecutionState*> &result) {
-  int size = 0;
   TimerStatIncrementer timer(stats::forkTime);
   unsigned N = conditions.size();
   assert(N);
@@ -890,14 +889,14 @@ int Executor::branch(ExecutionState &state,
           }
 				}
 			} else if(allowTrueBranch) {
-				es->pathOS << "0";
+				//es->pathOS << "0";
 				es->depth++;
 				//this break is deliberate 
 				break;
 			} else if(allowFalseBranch) {
 				result[result.size()-1] = nullptr;
 				result.push_back(es);
-				es->pathOS << "1";
+				//es->pathOS << "1";
 				es->depth++;
 			}
 		}
@@ -997,7 +996,6 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
     timeout *= it->second.size();
 
   if(coreId == 0) {
-  //if(true) {
     solver->setTimeout(timeout);
     bool success = solver->evaluate(current, condition, res);
     solver->setTimeout(time::Span());
@@ -1009,10 +1007,32 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
   } else {
     if((current.depth < prefixDepth) && (prefixDepth!=0)) {
       ref<Expr> testRef = testAssign.evaluate(condition);
+      bool reees;
       if (ConstantExpr *CE = dyn_cast<ConstantExpr>(testRef)) {
         res = CE->isTrue() ? Solver::True : Solver::False;
+        reees = CE->isTrue();
       } else {
         assert(false);//should not be a non-constant expression
+      }
+      if(ENABLE_LOGGING) {
+        Solver::Validity res1;
+        solver->setTimeout(timeout);
+        bool success1 = solver->evaluate(current, condition, res1);
+        solver->setTimeout(time::Span());
+        if(success1) {
+          if((res1 != Solver::True) && (res1 != Solver::False)) {
+            logFile << "HAHA branch wanted execution to fork but test went: "<<reees<<"\n";
+          }
+          else {
+            bool gg = res1==Solver::True?1:0;
+            if(gg!=reees) {
+              logFile << " HUHU conflict\n";
+            }
+          }
+        }
+        logFile << " Branch: Ranging using tests at depth: "<<current.depth<<" "
+          <<current.actDepth<<" Res:"<<reees<<"\n";
+        logFile.flush();
       }
     } else {
       solver->setTimeout(timeout);
@@ -1022,6 +1042,10 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
         current.pc = current.prevPC; 
         terminateStateEarly(current, "Query timed out (fork).");
         return StatePair(0, 0);
+      }
+      if(ENABLE_LOGGING) {
+        logFile << " Branch: Not ranging using tests at depth: "<<current.depth<<" "<<current.actDepth<<"\n";
+        logFile.flush();
       }
     }
   }
@@ -1116,349 +1140,124 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
 
   if (res==Solver::True) {
 		if(ENABLE_DEBUG) std::cout<<"Always True\n";
-    if (!isInternal) {
-      if (pathWriter) {
-        current.pathOS << "0";
-      }
-    }
+    //if (!isInternal) {
+    //  if (pathWriter) {
+    //    current.pathOS << "0";
+    //  }
+    //}
     current.depth++;
+    addConstraint(current, condition);
     return StatePair(&current, 0);
 
   } else if (res==Solver::False) {
 		if(ENABLE_DEBUG) std::cout<<"Always False\n";
-    if (!isInternal) {
-      if (pathWriter) {
-        current.pathOS << "1";
-      }
-    }
+    //if (!isInternal) {
+    //  if (pathWriter) {
+    //    current.pathOS << "1";
+    //  }
+    //}
     current.depth++;
+    addConstraint(current, Expr::createIsZero(condition));
     return StatePair(0, &current);
 
   } else {
-		if(enableRanging || enablePathPrefixFilter) {
-	    std::vector<unsigned char> pathTillNow;
-  	  pathWriter->readStream(getPathStreamID(current), pathTillNow);
-	    if(ENABLE_DEBUG) {
-  	    std::cout << "Path Till Now: ";
-  	    for (auto I = pathTillNow.begin(); I != pathTillNow.end(); ++I) {
-    	    std::cout << *I;
-  	    }
-  	    std::cout << "\n";
-	    }
+    TimerStatIncrementer timer(stats::forkTime);
+    ExecutionState *falseState, *trueState = &current;
 
-			bool allowFalseBranch=true;
-			bool allowTrueBranch=true;
+    ++stats::forks;
 
-			//making and checking the feasibility of true path
-			pathTillNow.push_back('0');
-			allowTrueBranch = !checkRange(pathTillNow);
-			//making and checking the feasibility of false path
-			pathTillNow.pop_back();
-			pathTillNow.push_back('1');
-			allowFalseBranch = !checkRange(pathTillNow);
-			if(ENABLE_DEBUG) {
-				if(allowTrueBranch)
-					if(ENABLE_LOGGING) logFile << "RangeCheck: Allowing the true branch \n";
-				else
-					if(ENABLE_LOGGING) logFile << "RangeCheck: Denying the true branch \n";
-				if(allowFalseBranch)
-					if(ENABLE_LOGGING) logFile << "RangeCheck: Allowing the false branch \n";
-				else
-					if(ENABLE_LOGGING) logFile << "RangeCheck: Denying the false branch \n";
-			}
-			pathTillNow.pop_back();
-
-			if (allowTrueBranch && allowFalseBranch) {
-				TimerStatIncrementer timer(stats::forkTime);
-				ExecutionState *falseState, *trueState = &current;
-
-				++stats::forks;
-
-				falseState = trueState->branch();
-				addedStates.push_back(falseState);
-				if(false) {
-					std::cout << "New State: ";
-					std::cout << &falseState << std::endl;
-				}
-
-
-				if (it != seedMap.end()) {
-					std::vector<SeedInfo> seeds = it->second;
-					it->second.clear();
-					std::vector<SeedInfo> &trueSeeds = seedMap[trueState];
-					std::vector<SeedInfo> &falseSeeds = seedMap[falseState];
-					for (std::vector<SeedInfo>::iterator siit = seeds.begin(), 
-								 siie = seeds.end(); siit != siie; ++siit) {
-						ref<ConstantExpr> res;
-						bool success = 
-							solver->getValue(current, siit->assignment.evaluate(condition), res);
-						assert(success && "FIXME: Unhandled solver failure");
-						(void) success;
-						if (res->isTrue()) {
-							trueSeeds.push_back(*siit);
-						} else {
-							falseSeeds.push_back(*siit);
-						}
-					}
-					
-					bool swapInfo = false;
-					if (trueSeeds.empty()) {
-						if (&current == trueState) swapInfo = true;
-						seedMap.erase(trueState);
-					}
-					if (falseSeeds.empty()) {
-						if (&current == falseState) swapInfo = true;
-						seedMap.erase(falseState);
-					}
-					if (swapInfo) {
-						std::swap(trueState->coveredNew, falseState->coveredNew);
-						std::swap(trueState->coveredLines, falseState->coveredLines);
-					}
-				}
-
-				current.ptreeNode->data = 0;
-				std::pair<PTree::Node*, PTree::Node*> res =
-					processTree->split(current.ptreeNode, falseState, trueState);
-				falseState->ptreeNode = res.first;
-				trueState->ptreeNode = res.second;
-
-				if (pathWriter) {
-				// Need to update the pathOS.id field of falseState, otherwise the same id
-				// is used for both falseState and trueState.
-					falseState->pathOS = pathWriter->open(current.pathOS);
-					if (!isInternal) {
-						trueState->pathOS << "0";
-						falseState->pathOS << "1";
-					}
-				}
-				if (symPathWriter) {
-					falseState->symPathOS = symPathWriter->open(current.symPathOS);
-					if (!isInternal) {
-						trueState->symPathOS << "0";
-						falseState->symPathOS << "1";
-					}
-				}
-
-				addConstraint(*trueState, condition);
-				addConstraint(*falseState, Expr::createIsZero(condition));
-
-				// Kinda gross, do we even really still want this option?
-				if (MaxDepth && MaxDepth<=trueState->depth) {
-					terminateStateEarly(*trueState, "max-depth exceeded.");
-					terminateStateEarly(*falseState, "max-depth exceeded.");
-					return StatePair(0, 0);
-				}
-
-				return StatePair(trueState, falseState);
-			} else if(allowTrueBranch && !allowFalseBranch) {
-				TimerStatIncrementer timer(stats::forkTime);
-				ExecutionState *trueState = &current;
-				trueState->depth++;
-
-				++stats::forks;
-
-				if (it != seedMap.end()) {
-					std::vector<SeedInfo> seeds = it->second;
-					it->second.clear();
-					std::vector<SeedInfo> &trueSeeds = seedMap[trueState];
-					for (std::vector<SeedInfo>::iterator siit = seeds.begin(),
-								 siie = seeds.end(); siit != siie; ++siit) {
-						ref<ConstantExpr> res;
-						bool success =
-							solver->getValue(current, siit->assignment.evaluate(condition), res);
-						assert(success && "FIXME: Unhandled solver failure");
-						(void) success;
-						if (res->isTrue()) {
-							trueSeeds.push_back(*siit);
-						}
-					}
-
-					bool swapInfo = false;
-					if (trueSeeds.empty()) {
-						if (&current == trueState) swapInfo = true;
-						seedMap.erase(trueState);
-					}
-				}
-
-				if (pathWriter) {
-					if (!isInternal) {
-						trueState->pathOS << "0";
-					}
-				}
-				if (symPathWriter) {
-					if (!isInternal) {
-						trueState->symPathOS << "0";
-					}
-				}
-
-				addConstraint(*trueState, condition);
-
-				//std::cout <<"Depth: ";
-				//std::cout << trueState->depth<<std::endl;
-
-				// Kinda gross, do we even really still want this option?
-				if (MaxDepth && MaxDepth<=trueState->depth) {
-					terminateStateEarly(*trueState, "max-depth exceeded.");
-					return StatePair(0, 0);
-				}
-				return StatePair(trueState, 0);
-			} else if(!allowTrueBranch && allowFalseBranch) {
-								TimerStatIncrementer timer(stats::forkTime);
-					ExecutionState *falseState = &current;
-
-					++stats::forks;
-					falseState->depth++;
-
-					if (it != seedMap.end()) {
-						std::vector<SeedInfo> seeds = it->second;
-						it->second.clear();
-						std::vector<SeedInfo> &falseSeeds = seedMap[falseState];
-						for (std::vector<SeedInfo>::iterator siit = seeds.begin(),
-									 siie = seeds.end(); siit != siie; ++siit) {
-							ref<ConstantExpr> res;
-							bool success =
-								solver->getValue(current, siit->assignment.evaluate(condition), res);
-							assert(success && "FIXME: Unhandled solver failure");
-							(void) success;
-							if (res->isTrue()) {
-							} else {
-								falseSeeds.push_back(*siit);
-							}
-						}
-
-						bool swapInfo = false;
-						if (falseSeeds.empty()) {
-							if (&current == falseState) swapInfo = true;
-							seedMap.erase(falseState);
-						}
-					}
-
-					if (pathWriter) {
-						// Need to update the pathOS.id field of falseState, otherwise the same id
-						// is used for both falseState and trueState.
-						falseState->pathOS = pathWriter->open(current.pathOS);
-						if (!isInternal) {
-							falseState->pathOS << "1";
-						}
-					}
-					if (symPathWriter) {
-						if (!isInternal) {
-							falseState->symPathOS << "1";
-						}
-					}
-
-					addConstraint(*falseState, Expr::createIsZero(condition));
-
-					// Kinda gross, do we even really still want this option?
-					//if (MaxDepth && MaxDepth<=trueState->depth) {
-					 // terminateStateEarly(*falseState, "max-depth exceeded.");
-					 // return StatePair(0, 0);
-					//}
-					return StatePair(0, falseState);
-			} else {
-				return StatePair(0,0);
-			}
-  	}	else {
-			TimerStatIncrementer timer(stats::forkTime);
-			ExecutionState *falseState, *trueState = &current;
-
-			++stats::forks;
-
-			//bool decrementDepth = true;
-
-			falseState = trueState->branch();
-			addedStates.push_back(falseState);
-			if(false) {
-				std::cout << "New State: ";
-				std::cout << &(*falseState) << std::endl;
-			}
-
-			if (it != seedMap.end()) {
-				std::vector<SeedInfo> seeds = it->second;
-				it->second.clear();
-				std::vector<SeedInfo> &trueSeeds = seedMap[trueState];
-				std::vector<SeedInfo> &falseSeeds = seedMap[falseState];
-				for (std::vector<SeedInfo>::iterator siit = seeds.begin(),
-							 siie = seeds.end(); siit != siie; ++siit) {
-					ref<ConstantExpr> res;
-					bool success =
-						solver->getValue(current, siit->assignment.evaluate(condition), res);
-					assert(success && "FIXME: Unhandled solver failure");
-					(void) success;
-					if (res->isTrue()) {
-						trueSeeds.push_back(*siit);
-					} else {
-						falseSeeds.push_back(*siit);
-					}
-				}
-
-				bool swapInfo = false;
-				if (trueSeeds.empty()) {
-					if (&current == trueState) swapInfo = true;
-					seedMap.erase(trueState);
-				}
-				if (falseSeeds.empty()) {
-					if (&current == falseState) swapInfo = true;
-					seedMap.erase(falseState);
-				}
-				if (swapInfo) {
-					std::swap(trueState->coveredNew, falseState->coveredNew);
-					std::swap(trueState->coveredLines, falseState->coveredLines);
-				}
-			}
-
-			current.ptreeNode->data = 0;
-			std::pair<PTree::Node*, PTree::Node*> res =
-				processTree->split(current.ptreeNode, falseState, trueState);
-			falseState->ptreeNode = res.first;
-			trueState->ptreeNode = res.second;
-
-			if (pathWriter) {
-				// Need to update the pathOS.id field of falseState, otherwise the same id
-				// is used for both falseState and trueState.
-				falseState->pathOS = pathWriter->open(current.pathOS);
-				if (!isInternal) {
-					//decrementDepth = false;
-					trueState->pathOS << "0";
-					falseState->pathOS << "1";
-					if(false) {
-						std::vector<unsigned char> concreteBranches;
-						pathWriter->readStream(getPathStreamID(*trueState), concreteBranches);
-						for (auto I = concreteBranches.begin(); I != concreteBranches.end(); ++I) {
-							std::cout << *I << "\n";
-						}
-						int sum = convertPath2Number(concreteBranches);
-						std::cout << "BranchId: " << sum <<"\n";
-						std::cout<<"-=====-\n";
-						std::vector<unsigned char> concreteBranches2;
-						pathWriter->readStream(getPathStreamID(*falseState), concreteBranches2);
-						for (auto I = concreteBranches2.begin(); I != concreteBranches2.end(); ++I) {
-							std::cout << *I << "\n";
-						}
-						sum = convertPath2Number(concreteBranches2);
-						std::cout << "BranchId: " << sum <<"\n";
-					}
-				}
-			}
-			if (symPathWriter) {
-				if (!isInternal) {
-					trueState->symPathOS << "1";
-					falseState->symPathOS << "0";
-				}
-			}
-
-			addConstraint(*trueState, condition);
-			addConstraint(*falseState, Expr::createIsZero(condition));
-
-			// Kinda gross, do we even really still want this option?
-			if (MaxDepth && MaxDepth<=trueState->depth) {
-				terminateStateEarly(*trueState, "max-depth exceeded.");
-				terminateStateEarly(*falseState, "max-depth exceeded.");
-				return StatePair(0, 0);
-			}
-
-			return StatePair(trueState, falseState);
+    falseState = trueState->branch();
+    addedStates.push_back(falseState);
+    if(false) {
+      std::cout << "New State: ";
+      std::cout << &(*falseState) << std::endl;
     }
+
+    if (it != seedMap.end()) {
+      std::vector<SeedInfo> seeds = it->second;
+      it->second.clear();
+      std::vector<SeedInfo> &trueSeeds = seedMap[trueState];
+      std::vector<SeedInfo> &falseSeeds = seedMap[falseState];
+      for (std::vector<SeedInfo>::iterator siit = seeds.begin(),
+             siie = seeds.end(); siit != siie; ++siit) {
+        ref<ConstantExpr> res;
+        bool success =
+          solver->getValue(current, siit->assignment.evaluate(condition), res);
+        assert(success && "FIXME: Unhandled solver failure");
+        (void) success;
+        if (res->isTrue()) {
+          trueSeeds.push_back(*siit);
+        } else {
+          falseSeeds.push_back(*siit);
+        }
+      }
+
+      bool swapInfo = false;
+      if (trueSeeds.empty()) {
+        if (&current == trueState) swapInfo = true;
+        seedMap.erase(trueState);
+      }
+      if (falseSeeds.empty()) {
+        if (&current == falseState) swapInfo = true;
+        seedMap.erase(falseState);
+      }
+      if (swapInfo) {
+        std::swap(trueState->coveredNew, falseState->coveredNew);
+        std::swap(trueState->coveredLines, falseState->coveredLines);
+      }
+    }
+
+    current.ptreeNode->data = 0;
+    std::pair<PTree::Node*, PTree::Node*> res =
+      processTree->split(current.ptreeNode, falseState, trueState);
+    falseState->ptreeNode = res.first;
+    trueState->ptreeNode = res.second;
+
+    if (pathWriter) {
+      // Need to update the pathOS.id field of falseState, otherwise the same id
+      // is used for both falseState and trueState.
+      falseState->pathOS = pathWriter->open(current.pathOS);
+      if (!isInternal) {
+        //decrementDepth = false;
+        trueState->pathOS << "0";
+        falseState->pathOS << "1";
+        if(false) {
+          std::vector<unsigned char> concreteBranches;
+          pathWriter->readStream(getPathStreamID(*trueState), concreteBranches);
+          for (auto I = concreteBranches.begin(); I != concreteBranches.end(); ++I) {
+            std::cout << *I << "\n";
+          }
+          int sum = convertPath2Number(concreteBranches);
+          std::cout << "BranchId: " << sum <<"\n";
+          std::cout<<"-=====-\n";
+          std::vector<unsigned char> concreteBranches2;
+          pathWriter->readStream(getPathStreamID(*falseState), concreteBranches2);
+          for (auto I = concreteBranches2.begin(); I != concreteBranches2.end(); ++I) {
+            std::cout << *I << "\n";
+          }
+          sum = convertPath2Number(concreteBranches2);
+          std::cout << "BranchId: " << sum <<"\n";
+        }
+      }
+    }
+    if (symPathWriter) {
+      if (!isInternal) {
+        trueState->symPathOS << "1";
+        falseState->symPathOS << "0";
+      }
+    }
+
+    addConstraint(*trueState, condition);
+    addConstraint(*falseState, Expr::createIsZero(condition));
+
+    // Kinda gross, do we even really still want this option?
+    if (MaxDepth && MaxDepth<=trueState->depth) {
+      terminateStateEarly(*trueState, "max-depth exceeded.");
+      terminateStateEarly(*falseState, "max-depth exceeded.");
+      return StatePair(0, 0);
+    }
+
+    return StatePair(trueState, falseState);
 	}
 }
 
@@ -2180,9 +1979,9 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       
       //fork all the cases when you are the master node or when we have
       //exceeded the depth to which to do the prefix ranging
-      if((state.depth >= prefixDepth)|| coreId==0) { 
+      if((state.depth >= prefixDepth) || coreId==0) { 
         if(ENABLE_LOGGING) {
-          logFile << "Not Ranging using tests at depth: "<<state.depth<<"\n";
+          logFile << " Switch: Not Ranging using tests at depth: "<<state.depth<<" "<<state.actDepth<<"\n";
           logFile.flush();
         }
         // iterate through all non-default cases but in order of the expressions
@@ -2260,7 +2059,10 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
           ++x;
         }
       } else {
-        if(ENABLE_LOGGING) logFile << "Ranging using tests at depth: "<<state.depth<<"\n";
+        if(ENABLE_LOGGING) { 
+          logFile << " Switch: Ranging using tests at depth: "<<state.depth<<" "<<state.actDepth<<"\n";
+          logFile.flush();
+        }
 				bool nonDefaultCaseFound = false;
 				// iterate through all non-default cases but in order of the expressions
 				for (std::map<ref<Expr>, BasicBlock *>::iterator
@@ -2298,16 +2100,16 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
 							}
 							state.addConstraint(res.first->second);
 
-							if (pathWriter) {
-  							state.pathOS << "0";
-							}
+							//if (pathWriter) {
+  						//	state.pathOS << "0";
+							//}
 				      transferToBasicBlock(caseSuccessor, bb, state);
               break;
 						} else {
               if(ENABLE_LOGGING) logFile << "Not Found a satisfying switch: "<<state.depth<<"\n";
-							if (pathWriter) {
-  							state.pathOS << "1";
-							}
+							//if (pathWriter) {
+  						//	state.pathOS << "1";
+							//}
 						}
 					} else {
   					assert(false);//should not be a non-constant expression
@@ -3570,7 +3372,6 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
       logFile<<"State Depth:"<<state.actDepth<<"\n";
       prev_statedepth = state.actDepth;
     }
-    //if(ENABLE_LOGGING) printStatePath(state, logFile, "Select path: ");
     KInstruction *ki = state.pc;
     stepInstruction(state);
 
@@ -3590,12 +3391,9 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
       	}
       } else {
         //removing states that have reached the termination depth
-        //std::vector<unsigned char> pathTillNow;
-        //pathWriter->readStream(getPathStreamID(state), pathTillNow);
-        //if(pathTillNow.size() >= branchLevel2Halt) {
-        if(state.actDepth >= branchLevel2Halt) {
-          terminateStateEarly(state, "branchHalt");
-          //removedStates.push_back(&state);
+        if(state.actDepth > branchLevel2Halt) {
+          //terminateStateEarly(state, "branchHalt");
+          removedStates.push_back(&state);
         }
       }
 		}
@@ -3605,8 +3403,10 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
 	//here empty out all the states into the worklist
 	if(enableBranchHalt && (coreId==0)) {
   	for(auto it = states.begin(); it != states.end(); ++it) {
-     	//addState2WorkList(**it);
-      //addTest2WorkList(**it);
+      if(ENABLE_LOGGING) {
+        logFile << "Adding State of depth: "<<(**it).depth<<" "<<(**it).actDepth<<"\n";
+        logFile.flush();
+      }
       addTestName2WorkList(**it);
  		}		
 	}
@@ -3620,13 +3420,21 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
 }
 
 bool Executor::addTestName2WorkList(ExecutionState &state) {
-  //for(auto it = states.begin(); it != states.end(); ++it) {
   unsigned tId = interpreterHandler->processTestCase(state, "early", "early"); 
   std::stringstream filename;
+  if(ENABLE_LOGGING) {
+    lastTestPath.clear();
+    if(pathWriter) {
+      pathWriter->readStream(getPathStreamID(state), lastTestPath);
+      for (auto I = lastTestPath.begin(); I != lastTestPath.end(); ++I) 
+          brhistFile << *I;
+      brhistFile << "\n";
+      brhistFile.flush();
+    }
+  }
+
   filename << "test" << std::setfill('0') << std::setw(6) << tId << ".ktest";
   std::string testName = outputDir+"/"+filename.str()+","+std::to_string(state.depth);
-  //std::cout << "FULLTstName: "<<testName<<"\n";
-  //}
   workListTestName.push_back(testName);
 }
 
@@ -3761,6 +3569,16 @@ void Executor::terminateStateEarly(ExecutionState &state,
       (AlwaysOutputSeeds && seedMap.count(&state)))
     interpreterHandler->processTestCase(state, (message + "\n").str().c_str(),
                                         "early");
+  if(true) {
+    lastTestPath.clear();
+    pathWriter->readStream(getPathStreamID(state), lastTestPath);
+    for (auto I = lastTestPath.begin(); I != lastTestPath.end(); ++I) {
+      brhistFile << *I;
+    }
+    brhistFile << "\n";
+    brhistFile.flush();
+  }
+
   terminateState(state);
 }
 
@@ -3768,15 +3586,16 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
   if (!OnlyOutputStatesCoveringNew || state.coveredNew || 
       (AlwaysOutputSeeds && seedMap.count(&state)))
     interpreterHandler->processTestCase(state, 0, 0);
-  if(dumpSingleFile) std::cout << "Branch History: ";
-  lastTestPath.clear();
+  logFile<<"TestCase: "<<state.depth<<" "<<state.actDepth<<"\n";
+  logFile.flush();
   if(ENABLE_LOGGING) {
-    //pathWriter->readStream(getPathStreamID(state), lastTestPath);
-    //for (auto I = lastTestPath.begin(); I != lastTestPath.end(); ++I) {
-    //  brhistFile << *I;
-    //}
-    //brhistFile << "\n";
-    //brhistFile.flush();
+    lastTestPath.clear();
+    pathWriter->readStream(getPathStreamID(state), lastTestPath);
+    for (auto I = lastTestPath.begin(); I != lastTestPath.end(); ++I) {
+      brhistFile << *I;
+    }
+    brhistFile << "\n";
+    brhistFile.flush();
   }
   terminateState(state);
 }
@@ -4847,6 +4666,14 @@ void Executor::initializePrefixTestData() {
     std::vector<unsigned char> objVal;
     for(int y=0; y<obj.numBytes; y++) {
       objVal.push_back(obj.bytes[y]);
+    }
+    if(ENABLE_LOGGING) {
+      std::cout << "Object Value: ";
+      for(auto it=objVal.begin(); it != objVal.end(); ++it) {
+        std::cout <<*it;
+      }
+      std::cout<<"\n";
+      std::cout.flush();
     }
     testValues.push_back(objVal);
   }

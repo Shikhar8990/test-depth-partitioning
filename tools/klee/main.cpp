@@ -557,9 +557,9 @@ unsigned KleeHandler::processTestCase(const ExecutionState &state,
                                    concreteBranches);
       auto f = openTestFile("path", id);
       if (f) {
-          for (const auto &branch : concreteBranches) {
-            *f << branch << '\n';
-          }
+        for (const auto &branch : concreteBranches) {
+          *f << branch << '\n';
+        }
       }
     }
 
@@ -1275,7 +1275,7 @@ int watchDog() {
 }
 
 void timeOutCheck() {
-  sleep(int(timeOut));
+  sleep(int(86400));
   char dummy;
   MPI_Send(&dummy, 1, MPI_CHAR, 0, TIMEOUT, MPI_COMM_WORLD);
 
@@ -1369,7 +1369,7 @@ void master(int argc, char **argv, char **envp) {
 
   //*************Running Phase 1****************
   if(phase1Depth != 0) { 
-    launchKleeInstance(0, argc, argv, envp, workList, dummyprefix, phase1Depth, NO_MODE, "DFS");
+    launchKleeInstance(0, argc, argv, envp, workList, dummyprefix, phase1Depth, NO_MODE, "BFS");
   } else { //single core mode, just get a worker to launck a normal klee instance, only to be 
     //used with 3 cores
     char dummychar;
@@ -1778,12 +1778,7 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
 
 	externalsAndGlobalsCheck(finalModule);
   
-	int world_rank;
-  MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-  std::string output_dir_file;
-  std::string pthfile;
-
-  if(explorationDepth != 0) {
+  /*if(explorationDepth != 0) {
     interpreter->setExplorationDepth(explorationDepth);
   }
 
@@ -1835,7 +1830,7 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
   }
   
   pthfile = handler->getOutputDir()+"_pathFile_"+std::to_string(x);
-  interpreter->setPathFile(pthfile);
+  interpreter->setPathFile(pthfile);*/
   
   //char buf[256];
   //time_t t[2];
@@ -1933,15 +1928,33 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
       }
     }
 
-    /*if(explorationDepth != 0) {
+    if(explorationDepth != 0) {
       interpreter->setExplorationDepth(explorationDepth);
     }
 
     if(mode == PREFIX_MODE) {
-      interpreter->setUpperBound(prefix);
-      interpreter->setLowerBound(prefix);
-      interpreter->enablePrefixChecking();
-      interpreter->enableRangeChecking();
+			std::string pktest(prefix.begin(), prefix.end());
+			std::cout << "Prefixed Received: "<<pktest<<"\n";
+
+			char *pch;
+			pch = strtok(&pktest[0], ",");
+			int count = 0;
+			while(pch!=NULL) {
+				std::string ff(pch);
+				std::cout<<ff<<"\n";
+				if(count == 0) {
+					KTest *out = kTest_fromFile(ff.c_str());
+					if (out) {
+						interpreter->setPrefixKTest(out, ff);
+					} else {
+						klee_warning("unable to open: %s\n", ff);
+					}
+				} else {
+					interpreter->setTestPrefixDepth(std::stoi(ff));
+				}
+				++count;
+				pch = strtok(NULL, ",");
+			}
     } 
 
     if(ErrorLocation != "none") {
@@ -1953,6 +1966,11 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
         klee_error("INVALID Error Location Arguments");
       }
     }
+	  
+    int world_rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+    std::string output_dir_file;
+    std::string pthfile;
 
     interpreter->setSearchMode(searchMode);
     pthfile = handler->getOutputDir()+"_pathFile_"+std::to_string(x);
@@ -1961,26 +1979,10 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
     output_dir_file = handler->getOutputDir();
     interpreter->setBrHistFile(output_dir_file+"_br_hist");
     interpreter->setErrorFile(errorFile);
-    interpreter->setLogFile(output_dir_file+"_log_file");*/
+    interpreter->setLogFile(output_dir_file+"_log_file");
+    interpreter->setOutputDir(output_dir_file);
+    std::cout << "Setting log file: "<<output_dir_file+"_log_file"<<"\n";
 
-   	/*std::vector<std::string> kTestFiles = ReplayKTestFile;
-		std::cout << "KTest File: "<<kTestFiles[0] << std::endl;
-		for (std::vector<std::string>::iterator
-   		it = ReplayKTestDir.begin(), ie = ReplayKTestDir.end();
-  		it != ie; ++it)
- 	 		KleeHandler::getKTestFilesInDir(*it, kTestFiles);
-		for (std::vector<std::string>::iterator
-  		it = kTestFiles.begin(), ie = kTestFiles.end();
-  		it != ie; ++it) {
-  		//std::cout << "Test DDD: "<<it->c_str()<<std::endl;
-  		KTest *out = kTest_fromFile(it->c_str());
-  		if (out) {
-    		interpreter->setPrefixKTest(out);
-  		} else {
-    		klee_warning("unable to open: %s\n", (*it).c_str());
-  		}
-		}*/
- 
     interpreter->runFunctionAsMain2(mainFn, pArgc, pArgv, pEnvp, workList);
 
     while (!seeds.empty()) {
@@ -2057,7 +2059,7 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
   handler->getInfoStream() << stats.str();
 
   //remove the br_hist file path files log files and directory
-  if(ENABLE_CLEANUP) {
+  /*if(ENABLE_CLEANUP) {
     std::string brhist = output_dir_file+"_br_hist";
     const char * c = brhist.c_str();
     std::string logfile = output_dir_file+"_log_file";
@@ -2082,7 +2084,7 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
     remove(z);
     rmdir(e);
     std::cout <<"Deleteing dir: "<<output_dir_file<<"\n";
-  }
+  }*/
   
   delete handler;
   mainModule = NULL;

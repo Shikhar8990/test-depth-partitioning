@@ -674,6 +674,7 @@ public:
 	virtual void enableRangeChecking() {
 		enableRanging = true;
 	}
+
 	virtual void enablePrefixChecking() {
 		enablePathPrefixFilter = true;
 	}
