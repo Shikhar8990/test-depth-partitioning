@@ -302,6 +302,11 @@ namespace {
   Watchdog("watchdog",
            cl::desc("Use a watchdog process to enforce --max-time."),
            cl::init(0));
+
+  cl::opt<bool>
+  lb("lb",
+      cl::desc("load balance"),
+      cl::init(false));
 }
 
 extern cl::opt<std::string> MaxTime;
@@ -342,7 +347,8 @@ public:
 
   unsigned processTestCase(const ExecutionState  &state,
                        const char *errorMessage,
-                       const char *errorSuffix);
+                       const char *errorSuffix,
+                       bool writeOutput);
 
   std::string getOutputFilename(const std::string &filename);
   std::unique_ptr<llvm::raw_fd_ostream> openOutputFile(const std::string &filename);
@@ -504,8 +510,9 @@ KleeHandler::openTestFile(const std::string &suffix,
 /* Outputs all files (.ktest, .kquery, .cov etc.) describing a test case */
 unsigned KleeHandler::processTestCase(const ExecutionState &state,
                                   const char *errorMessage,
-                                  const char *errorSuffix) {
-  if (!NoOutput) {
+                                  const char *errorSuffix,
+                                  bool writeOutput) {
+  if (!NoOutput && writeOutput) {
     std::vector< std::pair<std::string, std::vector<unsigned char> > > out;
     bool success = m_interpreter->getSymbolicSolution(state, out);
 
@@ -1275,7 +1282,7 @@ int watchDog() {
 }
 
 void timeOutCheck() {
-  sleep(int(86400));
+  sleep(int(timeOut));
   char dummy;
   MPI_Send(&dummy, 1, MPI_CHAR, 0, TIMEOUT, MPI_COMM_WORLD);
 
@@ -1377,7 +1384,9 @@ void master(int argc, char **argv, char **envp) {
     MPI_Send(&dummychar, 1, MPI_CHAR, 2, NORMAL_TASK, MPI_COMM_WORLD);
     MPI_Recv(&dummychar, 1, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status3);
     if(status3.MPI_TAG == FINISH) {
-      masterLog << "MASTER_ELAPSED Normal Mode: \n";
+      masterLog << "MASTER_ELAPSED Normal Mode \n";
+      time::Span elapsed_time1(time::getWallTime() - stTime);
+      masterLog << "Time: "<<elapsed_time1<<"\n";
     } else if(status3.MPI_TAG == TIMEOUT) {
       masterLog << "MASTER_ELAPSED Timeout: \n";
     } else if(status3.MPI_TAG == BUG_FOUND) {
@@ -1403,7 +1412,7 @@ void master(int argc, char **argv, char **envp) {
 
   //If worklist size is smaller than cores, kill the rest of the processes
   while(currRank < num_cores) {
-    if(!OFFLOADING_ENABLE) {
+    if(!lb) {
       char dummy2;
       MPI_Send(&dummy2, 1, MPI_CHAR, currRank, KILL, MPI_COMM_WORLD);
       std::cout << "Killing(not required) worker: "<<currRank<<"\n";
@@ -1504,7 +1513,7 @@ void master(int argc, char **argv, char **envp) {
     }
 
     //if the freelist has some idle workers ask some busy worker to offload
-    if(freeList.size() > 0 && OFFLOADING_ENABLE) {
+    if(freeList.size() > 0 && lb) {
       //pick out the worker that has been busy the longest and to whom an
       //offload request in not yet sent
       bool foundWorker2Offload = false;

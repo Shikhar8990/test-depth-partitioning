@@ -107,7 +107,7 @@
 #define MIN_STATES 2
 #define DECREMENT_INT 2
 
-#define ENABLE_LOGGING true
+#define ENABLE_LOGGING false
 #define ENABLE_DEBUG false
 
 #define dumpSingleFile false
@@ -3026,7 +3026,7 @@ void Executor::check2Offload() {
       if(valid) {
       
         //create a test from the test
-        unsigned tId = interpreterHandler->processTestCase(*state2Remove, "offload", "offload");
+        unsigned tId = interpreterHandler->processTestCase(*state2Remove, "offload", "offload", true);
         std::stringstream filename;
         filename << "test" << std::setfill('0') << std::setw(6) << tId << ".ktest";
         std::string testName = outputDir+"/"+filename.str()+","+std::to_string((*state2Remove).depth);
@@ -3368,8 +3368,9 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
   int prev_statedepth=0;
   while (!states.empty() && !haltExecution) {
     ExecutionState &state = searcher->selectState();
-    if(ENABLE_LOGGING && (prev_statedepth!=state.actDepth)) {
+    if(prev_statedepth!=state.actDepth) {
       logFile<<"State Depth:"<<state.actDepth<<"\n";
+      logFile.flush();
       prev_statedepth = state.actDepth;
     }
     KInstruction *ki = state.pc;
@@ -3420,7 +3421,7 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
 }
 
 bool Executor::addTestName2WorkList(ExecutionState &state) {
-  unsigned tId = interpreterHandler->processTestCase(state, "early", "early"); 
+  unsigned tId = interpreterHandler->processTestCase(state, "early", "early", true); 
   std::stringstream filename;
   if(ENABLE_LOGGING) {
     lastTestPath.clear();
@@ -3569,7 +3570,7 @@ void Executor::terminateStateEarly(ExecutionState &state,
       (AlwaysOutputSeeds && seedMap.count(&state)))
     interpreterHandler->processTestCase(state, (message + "\n").str().c_str(),
                                         "early");
-  if(true) {
+  if(ENABLE_LOGGING) {
     lastTestPath.clear();
     pathWriter->readStream(getPathStreamID(state), lastTestPath);
     for (auto I = lastTestPath.begin(); I != lastTestPath.end(); ++I) {
@@ -3586,8 +3587,8 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
   if (!OnlyOutputStatesCoveringNew || state.coveredNew || 
       (AlwaysOutputSeeds && seedMap.count(&state)))
     interpreterHandler->processTestCase(state, 0, 0);
-  logFile<<"TestCase: "<<state.depth<<" "<<state.actDepth<<"\n";
-  logFile.flush();
+  //logFile<<"TestCase: "<<state.depth<<" "<<state.actDepth<<"\n";
+  //logFile.flush();
   if(ENABLE_LOGGING) {
     lastTestPath.clear();
     pathWriter->readStream(getPathStreamID(state), lastTestPath);
