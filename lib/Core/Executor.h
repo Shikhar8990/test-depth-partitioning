@@ -181,6 +181,9 @@ private:
   /// scheduled again
   std::vector<ExecutionState *> continuedStates;
 
+  /// Suspended because of prefix ranging  
+  std::vector<ExecutionState *> rangingSuspendedStates;
+
   /// When non-empty the Executor is running in "seed" mode. The
   /// states in this map will be executed in an arbitrary order
   /// (outside the normal search interface) until they terminate. When
@@ -213,7 +216,7 @@ private:
   unsigned replayPosition;
 
   ///the test to replay when using it as a prefix
-  const struct KTest *prefixTest;
+  struct KTest *prefixTest;
 
   std::string prefixTestName;
 
@@ -267,6 +270,9 @@ private:
 
   ///offload threshold
   unsigned int offloadThreshold;
+
+  ///state which is already removed cause of test switch ranging
+  ExecutionState* testSwitchRemovedState;
   
 
   /// When non-null a list of "seed" inputs which will be used to
@@ -282,7 +288,10 @@ private:
 
   /// Signals the executor to halt execution at the next instruction
   /// step.
-  bool haltExecution;  
+  bool haltExecution; 
+
+  ///halt from master
+  bool haltFromMaster; 
 
   /// Whether implied-value concretization is enabled. Currently
   /// false, it is buggy (it needs to validate its writes).
@@ -622,7 +631,7 @@ public:
     replayPosition = 0;
   }
 
-  virtual void setPrefixKTest(const struct KTest *out, std::string &testName) {
+  virtual void setPrefixKTest(struct KTest *out, std::string &testName) {
     prefixTest = out;
     prefixTestName = testName;
     initializePrefixTestData();

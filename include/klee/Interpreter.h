@@ -43,6 +43,8 @@ public:
 
 
   virtual void incPathsExplored() = 0;
+  virtual unsigned getNumPathsExplored() = 0;
+  virtual void resetPathsExplored() = 0;
 
   virtual unsigned processTestCase(const ExecutionState &state,
                                const char *err,
@@ -122,7 +124,7 @@ public:
   // interpretation down a user specified path. use null to reset.
   virtual void setReplayKTest(const struct KTest *out) = 0;
 
-  virtual void setPrefixKTest(const struct KTest *out, std::string &testName) = 0;
+  virtual void setPrefixKTest(struct KTest *out, std::string &testName) = 0;
 
   virtual void setTestPrefixDepth(unsigned inPD) = 0;
 

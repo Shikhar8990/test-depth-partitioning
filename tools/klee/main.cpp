@@ -67,20 +67,16 @@ using namespace klee;
 #define START_PREFIX_TASK 0
 #define KILL 1
 #define FINISH 2
-#define CONTINUE 3
-#define OFFLOAD 4
-#define CHECK_CONTINUE 5
-#define OFFLOAD_RESP 6
-#define START_RANGE_TASK 7
-#define BUG_FOUND 8
-#define TIMEOUT 9
-#define NORMAL_TASK 10
+#define OFFLOAD 3
+#define OFFLOAD_RESP 4
+#define BUG_FOUND 5
+#define TIMEOUT 6
+#define NORMAL_TASK 7
+#define KILL_COMP 8
 
 #define PREFIX_MODE 101
-#define RANGE_MODE 102
 #define NO_MODE 103
 
-#define OFFLOADING_ENABLE false
 #define ENABLE_CLEANUP false
 
 #define MASTER_NODE 0
@@ -340,6 +336,7 @@ public:
   unsigned getNumTestCases() { return m_numGeneratedTests; }
   unsigned getNumPathsExplored() { return m_pathsExplored; }
   void incPathsExplored() { m_pathsExplored++; }
+  void resetPathsExplored() { m_pathsExplored=0; } 
 
   void setInterpreter(Interpreter *i);
 
@@ -1365,6 +1362,7 @@ void master(int argc, char **argv, char **envp) {
   std::deque<unsigned int> freeList;
   std::deque<unsigned int> offloadActiveList;
   std::deque<unsigned int> busyList;
+  std::deque<unsigned int> offLoadReadyList;
   MPI_Status status;
   MPI_Status status1;
   MPI_Status status2;
@@ -1381,12 +1379,16 @@ void master(int argc, char **argv, char **envp) {
     //used with 3 cores
     char dummychar;
     MPI_Status status3;
+    MPI_Status status4;
     MPI_Send(&dummychar, 1, MPI_CHAR, 2, NORMAL_TASK, MPI_COMM_WORLD);
     MPI_Recv(&dummychar, 1, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status3);
     if(status3.MPI_TAG == FINISH) {
       masterLog << "MASTER_ELAPSED Normal Mode \n";
       time::Span elapsed_time1(time::getWallTime() - stTime);
       masterLog << "Time: "<<elapsed_time1<<"\n";
+      masterLog.flush();
+      MPI_Send(&dummychar, 1, MPI_CHAR, 2, KILL, MPI_COMM_WORLD);
+      MPI_Recv(&dummychar, 1, MPI_CHAR, 2, KILL_COMP, MPI_COMM_WORLD, &status4);
     } else if(status3.MPI_TAG == TIMEOUT) {
       masterLog << "MASTER_ELAPSED Timeout: \n";
     } else if(status3.MPI_TAG == BUG_FOUND) {
@@ -1494,17 +1496,32 @@ void master(int argc, char **argv, char **envp) {
             break;
            }
         }
+
         masterLog << "WORKER->MASTER: FINISH ID:"<<status.MPI_SOURCE<<"\n";
+        masterLog << "WORKER->MASTER: FREELIST SIZE:"<<freeList.size()<<"\n";
+        masterLog.flush();
         //if all workers finish then shut down the system
         if(freeList.size() == (num_cores-2)) {
+          masterLog << "MASTER: ALL WORKERS FINISHED \n";
+          masterLog.flush();
+          
+          //Kill all the workers
+          char dummy;
+          for(int x=2; x<num_cores; ++x) {
+              MPI_Send(&dummy, 1, MPI_CHAR, x, KILL, MPI_COMM_WORLD);
+          }
+
           masterLog << "MASTER_ELAPSED: \n";
           time::Span elapsed_time2(time::getWallTime() - stTime);
           masterLog << "Time: "<<elapsed_time2<<"\n";
           masterLog.close();
+          
+          for(int x=2; x<num_cores; ++x) {
+            MPI_Recv(&dummy, 1, MPI_CHAR, x, KILL_COMP, MPI_COMM_WORLD, &status2);
+          }
           MPI_Abort(MPI_COMM_WORLD, -1);
         }
-      }
-      if(status.MPI_TAG == TIMEOUT) {
+      } else if(status.MPI_TAG == TIMEOUT) {
         char dummy;
         for(int x=2; x<num_cores; ++x) {
           MPI_Send(&dummy, 1, MPI_CHAR, x, KILL, MPI_COMM_WORLD);
@@ -1513,7 +1530,7 @@ void master(int argc, char **argv, char **envp) {
     }
 
     //if the freelist has some idle workers ask some busy worker to offload
-    if(freeList.size() > 0 && lb) {
+    if(lb && (freeList.size()>0) && (freeList.size()<(num_cores-2))) {
       //pick out the worker that has been busy the longest and to whom an
       //offload request in not yet sent
       bool foundWorker2Offload = false;
@@ -1539,15 +1556,8 @@ void master(int argc, char **argv, char **envp) {
         MPI_Request offloadReq;
         MPI_Status offloadStatus;
         MPI_Send(&dummyVal, 1, MPI_INT, worker2offload, OFFLOAD, MPI_COMM_WORLD);
-        //masterLog << "MASTER->WORKER: OFFLOAD_SENT ID:"<<worker2offload<<"\n";
-        //masterLog.flush();
-        //remove the worker from the offloadActiveList
-        //for(auto it = offloadActiveList.begin(); it != offloadActiveList.end(); ++it) {
-        //  if (*it == worker2offload) {
-        //   offloadActiveList.erase(it);
-        //  break;
-        //}
-        //}
+        masterLog << "MASTER->WORKER: OFFLOAD_SENT ID:"<<worker2offload<<"\n";
+        masterLog.flush();
 
         //Recieve the offloaded work
         MPI_Probe(worker2offload, MPI_ANY_TAG, MPI_COMM_WORLD, &status2);
@@ -1557,11 +1567,11 @@ void master(int argc, char **argv, char **envp) {
           std::deque<unsigned char> buffer;
           buffer.resize(count);
           MPI_Recv(&buffer[0], count, MPI_CHAR, worker2offload, OFFLOAD_RESP, MPI_COMM_WORLD, &status2);
-          //masterLog << "WORKER->MASTER: OFFLOAD RCVD ID:"<<status2.MPI_SOURCE<<" Length:"<<count<<"\n";
+          masterLog << "WORKER->MASTER: OFFLOAD RCVD ID:"<<status2.MPI_SOURCE<<" Length:"<<count<<"\n";
           //for(int x=0; x<count; x++)
             //masterLog <<buffer[x];
           //masterLog<<"\n";
-          //masterLog.flush();
+          masterLog.flush();
 
           //Removing the offload active list worker 
           for(auto it = offloadActiveList.begin(); it != offloadActiveList.end(); ++it) {
@@ -1585,10 +1595,60 @@ void master(int argc, char **argv, char **envp) {
           auto wrkr = busyList.front();
           busyList.pop_front();
           busyList.push_back(wrkr); 
-        } 
-      }
-    } 
-  }
+        } else if(status2.MPI_TAG == FINISH) {
+          char dumm;
+          MPI_Recv(&dumm, 1, MPI_CHAR, worker2offload, FINISH, MPI_COMM_WORLD, &status2);
+	       	bool ffound=0;
+
+					for(auto it = offloadActiveList.begin(); it != offloadActiveList.end(); ++it) {
+  					if (*it == worker2offload) {
+    					offloadActiveList.erase(it);
+   					 	break;
+  					}
+					}
+
+       		for(auto it=freeList.begin(); it!=freeList.end(); ++it) {
+         		if(*it == status.MPI_SOURCE) {
+           		ffound=1;
+           		break;
+         		}
+       		}
+       		if(!ffound) freeList.push_back(status.MPI_SOURCE);
+
+       		for(auto it = busyList.begin(); it != busyList.end(); ++it) {
+         		if (*it == status.MPI_SOURCE) {
+          		busyList.erase(it);
+           		break;
+          	}
+       		}	
+
+       		masterLog << "WORKER->MASTER: FINISH ID:"<<status.MPI_SOURCE<<"\n";
+       		masterLog.flush();
+       		//if all workers finish then shut down the system
+       		if(freeList.size() == (num_cores-2)) {
+        		masterLog << "MASTER: ALL WORKERS FINISHED \n";
+         		masterLog.flush();
+
+         		//Kill all the workers
+         		char dummy;
+         		for(int x=2; x<num_cores; ++x) {
+            	 MPI_Send(&dummy, 1, MPI_CHAR, x, KILL, MPI_COMM_WORLD);
+         		}
+
+         		masterLog << "MASTER_ELAPSED: \n";
+         		time::Span elapsed_time2(time::getWallTime() - stTime);
+         		masterLog << "Time: "<<elapsed_time2<<"\n";
+         		masterLog.close();
+
+         		for(int x=2; x<num_cores; ++x) {
+           		MPI_Recv(&dummy, 1, MPI_CHAR, x, KILL_COMP, MPI_COMM_WORLD, &status2);
+         		}
+         		MPI_Abort(MPI_COMM_WORLD, -1);
+        	} 
+      	}
+    	} 
+  	}
+	}
 }
 
 void slave(int argc, char **argv, char **envp) {
@@ -1618,8 +1678,10 @@ void slave(int argc, char **argv, char **envp) {
       std::cout << "Process: "<<world_rank<<" Prefix Task: Length:"<<count<<"\n";
       launchKleeInstance(world_rank, argc, argv, envp, 
         dummyworkList, recvTest, phase2Depth, PREFIX_MODE, getNewSearch());
-      std::cout << "Finish: " << world_rank << "\n";
-      MPI_Send(&result, 1, MPI_CHAR, 0, FINISH, MPI_COMM_WORLD);
+      std::cout << "Cleanup Complete: " << world_rank << "\n";
+      //MPI_Send(&result, 1, MPI_CHAR, 0, FINISH, MPI_COMM_WORLD);
+      MPI_Send(&result, 1, MPI_CHAR, 0, KILL_COMP, MPI_COMM_WORLD);
+      return;
 
     } else if(status.MPI_TAG == NORMAL_TASK) {
       std::cout << "Process: "<<world_rank<<" Normal Task "<<"Prefix Depth: "<<phase2Depth<<"\n";
@@ -1627,7 +1689,8 @@ void slave(int argc, char **argv, char **envp) {
       recvTest.resize(count);
       launchKleeInstance(world_rank, argc, argv, envp,
         dummyworkList, recvTest, phase2Depth, NO_MODE, getNewSearch());
-      MPI_Send(&result, 1, MPI_CHAR, 0, FINISH, MPI_COMM_WORLD);
+      MPI_Send(&result, 1, MPI_CHAR, 0, KILL_COMP, MPI_COMM_WORLD);
+      return;
 
     } else if(status.MPI_TAG == OFFLOAD) {
   		int count, buffer;
@@ -1786,67 +1849,6 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
 	}
 
 	externalsAndGlobalsCheck(finalModule);
-  
-  /*if(explorationDepth != 0) {
-    interpreter->setExplorationDepth(explorationDepth);
-  }
-
-  if(mode == PREFIX_MODE) {
-		std::string pktest(prefix.begin(), prefix.end());
-    std::cout << "Prefixed Received: "<<pktest<<"\n";
-		
-		char *pch;
-		pch = strtok(&pktest[0], ",");
-		int count = 0;
-		while(pch!=NULL) {
-			std::string ff(pch);
-			std::cout<<ff<<"\n";
-			if(count == 0) {
-				KTest *out = kTest_fromFile(ff.c_str());
-				if (out) {
-  				interpreter->setPrefixKTest(out, ff);
-				} else {
-  				klee_warning("unable to open: %s\n", ff);
-				}
-			} else {
-				interpreter->setTestPrefixDepth(std::stoi(ff));	
-			}
-			++count;
-			pch = strtok(NULL, ",");
-		}
-  } 
-  
-	if(ErrorLocation != "none") {
-    std::string fname;
-    unsigned int line;
-    if(parseNameLineOption(ErrorLocation, fname, line)) {
-      interpreter->setErrorPair(std::make_pair(fname, line));
-    } else {
-      klee_error("INVALID Error Location Arguments");
-    }
-  }
-
-	interpreter->setSearchMode(searchMode);
-
-	output_dir_file = handler->getOutputDir();
-	interpreter->setBrHistFile(output_dir_file+"_br_hist");
-	interpreter->setErrorFile(errorFile);
-	interpreter->setLogFile(output_dir_file+"_log_file");
-  interpreter->setOutputDir(output_dir_file);
-
-  if (ReplayPathFile != "") {
-    interpreter->setReplayPath(&replayPath);
-  }
-  
-  pthfile = handler->getOutputDir()+"_pathFile_"+std::to_string(x);
-  interpreter->setPathFile(pthfile);*/
-  
-  //char buf[256];
-  //time_t t[2];
-  //t[0] = time(NULL);
-  //strftime(buf, sizeof(buf), "Started: %Y-%m-%d %H:%M:%S\n", localtime(&t[0]));
-  //handler->getInfoStream() << buf;
-  //handler->getInfoStream().flush();
 
   if (!ReplayKTestDir.empty() || !ReplayKTestFile.empty()) {
     assert(SeedOutFile.empty());
