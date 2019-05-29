@@ -112,7 +112,10 @@ public:
   unsigned depth;
 
   /// @brief Exploration depth - number of times klee branched state
-  unsigned actDepth; 
+  unsigned actDepth;
+
+  ///the worker a state belongs to 
+  unsigned originatingWorker; 
 
   /// @brief History of complete path: represents branches taken to
   /// reach/create this state (both concrete and symbolic)

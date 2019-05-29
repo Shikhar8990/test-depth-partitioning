@@ -98,11 +98,15 @@
 #define TIMEOUT 6
 #define NORMAL_TASK 7
 #define KILL_COMP 8
+#define READY_TO_OFFLOAD 9
+#define NOT_READY_TO_OFFLOAD 10
 
 #define PREFIX_MODE 101
 #define NO_MODE 103
 
 #define MASTER_NODE 0
+
+#define OFFLOAD_READY_THRESH 4
 
 #define ENABLE_LOGGING true
 #define ENABLE_DEBUG false
@@ -421,10 +425,10 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
       pathWriter(0), symPathWriter(0), specialFunctionHandler(0),
       processTree(0), replayKTest(0), replayPath(0), usingSeeds(0),
       atMemoryLimit(false), inhibitForking(false), haltExecution(false),
-      ivcEnabled(false), debugLogBuffer(debugBufferString),
-      enableBranchHalt(false), haltFromMaster(false),
+      ivcEnabled(false), debugLogBuffer(debugBufferString), 
+      enableBranchHalt(false), haltFromMaster(false), ready2Offload(false),
       waiting4OffloadReq(false), enableRanging(false), searchMode("BFS"), 
-      treepathFile("pathFile") {
+      treepathFile("pathFile"), offloadsSent(0), offloadsRecv(0) {
 
   errPair.second = -1;
 
@@ -452,6 +456,7 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
   memory = new MemoryManager(&arrayCache);
 
   prefixDepth=0;
+  enableLB=false;
 
   MPI_Comm_rank(MPI_COMM_WORLD, &coreId);
 
@@ -902,6 +907,7 @@ int Executor::branch(ExecutionState &state,
         for(int i=0; i<N-1; ++i) {
           rangingSuspendedStates.push_back(result[i]);
           logFile<<"Suspending state: "<<result[i]<<" "<<result[i]->actDepth<<"\n";
+          printStatePath(*result[i], logFile, "Suspended State Path:");
           logFile.flush();
         } 
         addedStates.push_back(result[N-1]);
@@ -925,6 +931,7 @@ int Executor::branch(ExecutionState &state,
         for(int i=0; i<N; ++i) {
           if(i != satCase) {
             logFile<<"Suspending state: "<<result[i]<<" "<<result[i]->actDepth<<"\n";
+            printStatePath(*result[i], logFile, "Suspended State Path:");
             logFile.flush();
             rangingSuspendedStates.push_back(result[i]);
           } else {
@@ -1080,7 +1087,7 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
       if(success1) {
         if((res1 != Solver::True) && (res1 != Solver::False)) {
           if(ENABLE_LOGGING) {
-            logFile << "HAHA branch wanted execution to fork but test went: "<<reees<<"\n";
+            logFile << "Branch wanted to fork but test took branch : "<<reees<<"\n";
           }
           forkAndSuspend=true;
         }
@@ -1222,6 +1229,8 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
       
       if(ENABLE_LOGGING) {
         logFile << "Suspending False Branch State: "<<falseState<<"\n";
+        printStatePath(*falseState, logFile, "Suspended State Path:");
+        logFile.flush();
         std::cout << "Suspending False Branch State"<<coreId<<" "<<outputDir<<"\n";
         std::cout.flush();
         //ref<Expr> ff = Expr::createIsZero(condition);
@@ -1267,8 +1276,8 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
       if(ENABLE_LOGGING) {
         logFile << "Suspending True Branch State "<<trueState<<"\n";
         std::cout << "Suspending True Branch State"<<coreId<<" "<<outputDir<<"\n";
-        //ref<Expr> ff = condition;
-        //ff->dump();
+        printStatePath(*trueState, logFile, "Suspended State Path:");
+        logFile.flush();
         std::cout.flush();
       }
 
@@ -1884,7 +1893,7 @@ static inline const llvm::fltSemantics * fpWidthToSemantics(unsigned width) {
 }
 
 void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
-  if(ENABLE_LOGGING) {
+  if(false) {
     logFile<<"Exec Inst depth: "<<&state<<" "<<state.actDepth<<" "<<states.size()<<"\n";
     logFile.flush();
   }
@@ -3015,9 +3024,9 @@ void Executor::check2Offload() {
   waiting4OffloadReq = true;
   if(flag) {
     if(status.MPI_TAG == OFFLOAD) {
-      int count, buffer;
-      MPI_Get_count(&status, MPI_INT, &count);
-      MPI_Recv(&buffer, count, MPI_INT, MASTER_NODE, OFFLOAD, MPI_COMM_WORLD, &status);
+      char worker2Send;
+      //MPI_Get_count(&status, MPI_INT, &count);
+      MPI_Recv(&worker2Send, 1, MPI_CHAR, MASTER_NODE, OFFLOAD, MPI_COMM_WORLD, &status);
       if(ENABLE_LOGGING) {
         logFile << "Offload Request\n";
         logFile.flush();
@@ -3031,21 +3040,38 @@ void Executor::check2Offload() {
         std::stringstream filename;
         filename << "test" << std::setfill('0') << std::setw(6) << tId << ".ktest";
         std::string testName = outputDir+"/"+filename.str()+","+std::to_string((*state2Remove).depth);
+        std::vector<char> pkt2Send(testName.begin(), testName.end());
         if(ENABLE_LOGGING) {
           logFile << "Offloading\n";
-          logFile << "Packet to Send: "<<testName<<"\n";
+          logFile << "Packet to Send: "<<testName<<" Length:"<<pkt2Send.size()<<"\n";
+          printStatePath(*state2Remove, logFile, "Offloaded State Path:");
           logFile.flush();
         }
-        MPI_Send(&testName[0], testName.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
-        terminateState(*state2Remove);
+        //MPI_Send(&pkt2Send[0], pkt2Send.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
+        //MPI_Send(pkt2Send.data(), pkt2Send.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
+        MPI_Send(testName.c_str(), testName.length(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
+        //terminateState(*state2Remove);
+				std::vector<ExecutionState *> remStates;
+				remStates.push_back(state2Remove);
+				searcher->update(nullptr, std::vector<ExecutionState *>(), remStates);
+				//find the state that we came in with in the states vector
+				auto ii = states.find(state2Remove);
+				assert(ii != states.end()); //can not be case as the state has to exist
+				states.erase(ii); //remove the state from states vector
+				rangingSuspendedStates.push_back(state2Remove);
+
       } else {
         if(ENABLE_LOGGING) {
           logFile << "Offloading\n";
           logFile << "Nothing to Send\n";
           logFile.flush();
         }
-        std::string dummyTest = "x";
-        MPI_Send(&dummyTest[0], dummyTest.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
+        std::vector<char> pkt2Send;
+        pkt2Send.push_back('x');
+        std::string testName = "x";
+        //MPI_Send(&pkt2Send[0], pkt2Send.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
+        //MPI_Send(pkt2Send.data(), pkt2Send.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
+        MPI_Send(testName.c_str(), testName.length(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
       }
       waiting4OffloadReq = false;
     } else if(status.MPI_TAG == KILL) {
@@ -3063,7 +3089,7 @@ void Executor::check2Offload() {
 
 void Executor::updateStates(ExecutionState *current) {
 
-	check2Offload();
+	if(enableLB) check2Offload();
 
   if (searcher) {
     bool foundAlreadyRemState=false;
@@ -3127,8 +3153,10 @@ void Executor::updateStates(ExecutionState *current) {
 
 ExecutionState* Executor::offloadFromStatesVector(bool &valid) {
   valid = false;
+  //this assert might not always be true
+  //assert(ready2Offload);
   if(haltExecution) return NULL;
-  if(states.size() > 4) {
+  if(ready2Offload) {
     //look for the first non recovery and non suspended state
     for(auto it=states.begin(); it!=states.end(); ++it) {
       bool isRemoved=false;
@@ -3278,6 +3306,7 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
 	enableBranchHalt = branchLevelHalt;
 
   states.insert(&initialState);
+  initialState.originatingWorker = coreId;
 
   if (usingSeeds) {
     std::vector<SeedInfo> &v = seedMap[&initialState];
@@ -3373,9 +3402,10 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
         } else {
           //removing states that have reached the termination depth
           if(state.actDepth > branchLevel2Halt) {
-            //terminateStateEarly(state, "branchHalt");
-            logFile<<"Removing State: "<<&state<<" "<<states.size()<<"\n";
-            logFile.flush();
+            if(ENABLE_LOGGING) {
+              logFile<<"Removing State: "<<&state<<" "<<states.size()<<"\n";
+              logFile.flush();
+            }
             
             std::vector<ExecutionState *> remStates;
             remStates.push_back(&state);
@@ -3384,9 +3414,6 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
             auto ii = states.find(&state);
             assert(ii != states.end()); //can not be case as the state has to exist
             states.erase(ii); //remove the state from states vector
-
-            //removedStates.push_back(&state);
-            //updateStates(&state);
 						continue;
           }
         }
@@ -3401,6 +3428,28 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
 			checkMemoryUsage();
       updateStates(&state);
 
+      //Look at the states size, and see if anything changes regards to 
+      //offload situation of this worker
+      if((coreId!=0) && enableLB) {
+        char dummy;
+        if(ready2Offload && (states.size()<OFFLOAD_READY_THRESH)) {
+          //can not offload now
+          MPI_Send(&dummy, 1, MPI_CHAR, 0, NOT_READY_TO_OFFLOAD, MPI_COMM_WORLD);
+          ready2Offload=false;
+          if(ENABLE_LOGGING) {
+            logFile<<"NOT READY2OFF\n";
+            logFile.flush();
+          }
+        } else if(!ready2Offload && (states.size()>=OFFLOAD_READY_THRESH)) {
+          //can offload now
+          MPI_Send(&dummy, 1, MPI_CHAR, 0, READY_TO_OFFLOAD, MPI_COMM_WORLD);
+          ready2Offload=true;
+          if(ENABLE_LOGGING) {
+            logFile<<"READY2OFF\n";
+            logFile.flush();
+          }
+        }
+      }
     }
 
     //do this only of you are not a master
@@ -3430,15 +3479,17 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
         haltFromMaster = true;
         haltExecution = true;
       } else if (status.MPI_TAG == START_PREFIX_TASK) {
-        std::vector<unsigned char> recv_prefix;
-        recv_prefix.resize(count);
-        MPI_Recv(&recv_prefix[0], count, MPI_CHAR, 0, START_PREFIX_TASK, MPI_COMM_WORLD, &status);
+        //std::vector<unsigned char> recv_prefix;
+        char* recv_prefix = (char*)malloc(count+1);
+        //recv_prefix.resize(count);
+        MPI_Recv(recv_prefix, count, MPI_CHAR, 0, START_PREFIX_TASK, MPI_COMM_WORLD, &status);
         if(ENABLE_LOGGING) {
           logFile << "Process1: "<<coreId<<" Prefix Task: Length:"<<count<<"\n";
           logFile.flush();
         }
 
-      	std::string pktest(recv_prefix.begin(), recv_prefix.end());
+      	//std::string pktest(recv_prefix.begin(), recv_prefix.end());
+      	std::string pktest(recv_prefix);
         if(ENABLE_LOGGING) {
           logFile << "Prefixed1 Received: "<<pktest<<"\n";
           logFile.flush();
@@ -3446,21 +3497,24 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
 
       	char *pch;
       	pch = strtok(&pktest[0], ",");
-      	int count = 0;
+      	int count1 = 0;
+        unsigned origWorker=coreId;
       	while(pch!=NULL) {
         	std::string ff(pch);
-        	std::cout<<ff<<"\n";
-        	if(count == 0) {
+        	//std::cout<<ff<<"\n";
+        	if(count1 == 0) {
           	KTest *out = kTest_fromFile(ff.c_str());
           	if (out) {
             	setPrefixKTest(out, ff);
           	} else {
             	klee_warning("unable to open: %s\n", ff);
           	}
-        	} else {
+        	} else if(count1==1) {
           	setTestPrefixDepth(std::stoi(ff));
-        	}
-        	++count;
+        	} else {
+            origWorker = std::stoi(ff);
+          }
+        	++count1;
         	pch = strtok(NULL, ",");
       	}
 
@@ -3495,9 +3549,12 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
           if(foundState) {
             if(ENABLE_LOGGING) {
               logFile << "Found a state to resume: "<<*rit<<"\n";
+              logFile << "Setting origWorker: "<<origWorker<<"\n";
+              printStatePath(**rit, logFile, "Resume State Path:");
               logFile.flush();
             }
             states.insert(*rit);
+            (*rit)->originatingWorker = origWorker;
             assert(states.size() == 1);
             std::vector<ExecutionState *> resumedStates(states.begin(), states.end());
             searcher->update(0, resumedStates, std::vector<ExecutionState *>());
@@ -3509,6 +3566,10 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
           bool ok = false;
           (void) ok;
           assert(ok && "no states were found to resume");
+          /*if(ENABLE_LOGGING) {
+            logFile<<"Did not find a state to resume\n";
+            logFile.flush();
+          }*/
           haltExecution = true;
         } else {
           haltExecution = false;
@@ -3519,7 +3580,7 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
           logFile << "FINISHED BUT GOT AN OFFLOAD REQ:\n";
           logFile.flush();
         }
-        MPI_Recv(&dummy2, count, MPI_CHAR, 0, OFFLOAD, MPI_COMM_WORLD, &status);
+        MPI_Recv(&dummy2, 1, MPI_CHAR, 0, OFFLOAD, MPI_COMM_WORLD, &status);
         //haltFromMaster = true;
       }
     }
@@ -4776,11 +4837,11 @@ void Executor::initializePrefixTestData() {
   testObjects.clear();
   testValues.clear();
   int numObjects = prefixTest->numObjects;
-  if(ENABLE_LOGGING) std::cout << "Num objects: "<<numObjects<<"\n";
+  if(ENABLE_LOGGING) logFile << "Num objects: "<<numObjects<<"\n";
   for(int x=0; x < numObjects; x++) {
     KTestObject obj = prefixTest->objects[x];
     std::string objName(obj.name);
-    if(ENABLE_LOGGING) std::cout << "Object Name: "<<objName<<" Size:"
+    if(ENABLE_LOGGING) logFile << "Object Name: "<<objName<<" Size:"
       <<obj.numBytes<<"\n";
     const Array* arr = arrayCache.CreateArray(objName, obj.numBytes);
     testObjects.push_back(arr);
@@ -4789,12 +4850,12 @@ void Executor::initializePrefixTestData() {
       objVal.push_back(obj.bytes[y]);
     }
     if(ENABLE_LOGGING) {
-      std::cout << "Object Value: ";
+      logFile << "Object Value: ";
       for(auto it=objVal.begin(); it != objVal.end(); ++it) {
-        std::cout <<int(*it);
+        logFile <<int(*it);
       }
-      std::cout<<"\n";
-      std::cout.flush();
+      logFile<<"\n";
+      logFile.flush();
     }
     testValues.push_back(objVal);
   }

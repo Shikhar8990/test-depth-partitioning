@@ -163,6 +163,7 @@ public:
   virtual void setRangeCheckMode(unsigned int modeId);
   virtual void setErrorPair(std::pair <std::string, unsigned int> inErrPair) = 0;
   virtual void initializeTestInputData(std::vector<std::pair<std::string, std::vector<unsigned char>>> &testInputs);
+  virtual void enableLoadBalancing(bool inLB) = 0;
 
   /*** Runtime options ***/
 

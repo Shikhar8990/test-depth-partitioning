@@ -70,6 +70,8 @@ ExecutionState::ExecutionState(KFunction *kf) :
     depth(0),
     actDepth(0),
 
+    originatingWorker(0),
+
     instsSinceCovNew(0),
     coveredNew(false),
     forkDisabled(false),
@@ -113,6 +115,7 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     weight(state.weight),
     depth(state.depth),
     actDepth(state.actDepth),
+    originatingWorker(state.originatingWorker),
 
     pathOS(state.pathOS),
     symPathOS(state.symPathOS),

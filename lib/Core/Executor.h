@@ -229,12 +229,21 @@ private:
   
   /// mode where only path prefixes have to be considered
   bool enablePathPrefixFilter;
+
+  bool enableLB;
   
   /// enable bounds checking
   bool enableRanging;
   
   /// enable branch level halt
   bool enableBranchHalt;
+
+  /// offload related counter
+  unsigned offloadsSent;
+  unsigned offloadsRecv;
+
+  /// signal that one is ready to recevied offload
+  bool ready2Offload;
   
   /// search mode
   std::string searchMode;
@@ -253,9 +262,6 @@ private:
   
   /// enable my debug prints
   bool shikharDebug;
-  
-  ///
-  MPI_Request offloadReq;
   
   ///number of states
   unsigned int numStates;
@@ -639,6 +645,10 @@ public:
 
   virtual void setTestPrefixDepth(unsigned inPD) {
     prefixDepth = inPD;
+  }
+
+  virtual void enableLoadBalancing(bool inLB) {
+    enableLB = inLB;
   }
 
   void setReplayPath(const std::vector<bool> *path) override {

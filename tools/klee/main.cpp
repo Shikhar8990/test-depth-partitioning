@@ -73,13 +73,15 @@ using namespace klee;
 #define TIMEOUT 6
 #define NORMAL_TASK 7
 #define KILL_COMP 8
+#define READY_TO_OFFLOAD 9
+#define NOT_READY_TO_OFFLOAD 10
 
 #define PREFIX_MODE 101
 #define NO_MODE 103
 
 #define ENABLE_CLEANUP false
-
 #define MASTER_NODE 0
+#define FLUSH true
 
 enum searchMode{
   DFS,
@@ -516,9 +518,7 @@ unsigned KleeHandler::processTestCase(const ExecutionState &state,
     if (!success)
       klee_warning("unable to get symbolic solution, losing test case");
 
-    //double start_time = util::getWallTime();
     const auto start_time = time::getWallTime();
-
     unsigned id = ++m_numTotalTests;
 
     if (success) {
@@ -1282,7 +1282,6 @@ void timeOutCheck() {
   sleep(int(timeOut));
   char dummy;
   MPI_Send(&dummy, 1, MPI_CHAR, 0, TIMEOUT, MPI_COMM_WORLD);
-
 }
 
 int main(int argc, char **argv, char **envp) {
@@ -1355,14 +1354,12 @@ void master(int argc, char **argv, char **envp) {
   typedef std::vector<std::pair<std::string, std::vector<unsigned char>>> testPacket;
 
   //std::deque<std::deque<unsigned char>> workList;
-  //std::deque<std::vector<std::pair<std::string, std::vector<unsigned char>>>> workList;
   std::deque<std::string> workList;
-  //std::vector<std::pair<std::string, std::vector<unsigned char>>> dummyprefix;
   std::vector<unsigned char> dummyprefix;
   std::deque<unsigned int> freeList;
   std::deque<unsigned int> offloadActiveList;
   std::deque<unsigned int> busyList;
-  std::deque<unsigned int> offLoadReadyList;
+  std::deque<unsigned int> offloadReadyList;
   MPI_Status status;
   MPI_Status status1;
   MPI_Status status2;
@@ -1382,11 +1379,12 @@ void master(int argc, char **argv, char **envp) {
     MPI_Status status4;
     MPI_Send(&dummychar, 1, MPI_CHAR, 2, NORMAL_TASK, MPI_COMM_WORLD);
     MPI_Recv(&dummychar, 1, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status3);
+    std::cout << "HYHY: "<<status3.MPI_SOURCE<<" "<<status3.MPI_TAG<<"\n";
     if(status3.MPI_TAG == FINISH) {
       masterLog << "MASTER_ELAPSED Normal Mode \n";
       time::Span elapsed_time1(time::getWallTime() - stTime);
       masterLog << "Time: "<<elapsed_time1<<"\n";
-      masterLog.flush();
+      if(FLUSH) masterLog.flush();
       MPI_Send(&dummychar, 1, MPI_CHAR, 2, KILL, MPI_COMM_WORLD);
       MPI_Recv(&dummychar, 1, MPI_CHAR, 2, KILL_COMP, MPI_COMM_WORLD, &status4);
     } else if(status3.MPI_TAG == TIMEOUT) {
@@ -1397,6 +1395,7 @@ void master(int argc, char **argv, char **envp) {
       masterLog << "Time: "<<elapsed_time1<<"\n";
     }
     masterLog.close();
+    std::cout << "HUHU\n";
     MPI_Abort(MPI_COMM_WORLD, -1);
   }
 
@@ -1424,7 +1423,8 @@ void master(int argc, char **argv, char **envp) {
     ++currRank; 
   }
 
-  //receive FINISH messages from workers and offload further work
+  //receive FINISH/BUG FOUND/OFFLOAD READY/NOT READY messages 
+  //from workers and offload further work
   char dummyRecv;
   auto currPrefix = workList.begin();
   while(currPrefix != workList.end() && (workList.size()>0)) {
@@ -1437,14 +1437,21 @@ void master(int argc, char **argv, char **envp) {
           break;
          }
       }
+      //also remove from offloadReadyList if it exists
+      for(auto it = offloadActiveList.begin(); it != offloadActiveList.end(); ++it) {
+        if (*it == status.MPI_SOURCE) {
+          offloadActiveList.erase(it);
+          break;
+        }
+      }
+
       masterLog << "WORKER->MASTER: FINISH ID:"<<status.MPI_SOURCE<<"\n";
       MPI_Send(&((*currPrefix)[0]), (*currPrefix).size(), MPI_CHAR, status.MPI_SOURCE, 
         START_PREFIX_TASK, MPI_COMM_WORLD);
       currPrefix = workList.erase(currPrefix);
       masterLog << "MASTER->WORKER: START_WORK ID:"<<status.MPI_SOURCE<<"\n";
       busyList.push_back(status.MPI_SOURCE);
-    }
-    if(status.MPI_TAG == BUG_FOUND) {
+    } else if(status.MPI_TAG == BUG_FOUND) {
       masterLog << "WORKER->MASTER:  BUG FOUND:"<<status.MPI_SOURCE<<"\n";
       time::Span elapsed_time1(time::getWallTime() - stTime);
       masterLog << "Time: "<<elapsed_time1<<"\n";
@@ -1454,19 +1461,42 @@ void master(int argc, char **argv, char **envp) {
       for(int x=2; x<num_cores; ++x) {
         MPI_Send(&dummy, 1, MPI_CHAR, x, KILL, MPI_COMM_WORLD);
       }
+    } else if(status.MPI_TAG == READY_TO_OFFLOAD) {
+      //masterLog << "WORKER->MASTER: READY TO OFFLOAD:"<<status.MPI_SOURCE<<"\n";
+      offloadReadyList.push_back(status.MPI_SOURCE);
+    } else if(status.MPI_TAG == NOT_READY_TO_OFFLOAD) {
+      bool found2Erase=false;
+      //masterLog << "WORKER->MASTER: NOT READY TO OFFLOAD:"<<status.MPI_SOURCE<<"\n";
+      for(auto it=offloadReadyList.begin(); it!=offloadReadyList.end(); ++it) {
+        if(*it==status.MPI_SOURCE) {
+          offloadReadyList.erase(it);
+          found2Erase=true;
+          break;
+        }
+      }
+      assert(found2Erase);
+    } else {
+      //should not see any tags here
+      bool ok = false;
+      (void) ok;
+      assert(ok && "MASTER received an illegal tag");
     } 
   }
 
   masterLog << "MASTER: DONE_WITH_ALL_PREFIXES\n";
-   
+	bool offloadActive = false;
   //once done with the initial prefixes offload when a worker becomes free 
   while(true) {
     MPI_Status status;
-    int flag;
+    int flag, count;
+    char *buffer;
+    //see what the workers are saying
     MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
 
     if(flag) {
-      MPI_Recv(&dummyRecv, 1, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+      MPI_Get_count(&status, MPI_CHAR, &count);
+      buffer = (char*)malloc(count+1);
+      MPI_Recv(buffer, count, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
       if(status.MPI_TAG == BUG_FOUND) {
         masterLog << "WORKER->MASTER: BUG FOUND:"<<status.MPI_SOURCE<<"\n";
         time::Span elapsed_time1(time::getWallTime() - stTime);
@@ -1479,8 +1509,7 @@ void master(int argc, char **argv, char **envp) {
         }
 
         //MPI_Abort(MPI_COMM_WORLD, -1);
-      } 
-      if(status.MPI_TAG == FINISH) {
+      } else if(status.MPI_TAG == FINISH) {
         bool ffound=0;
         for(auto it=freeList.begin(); it!=freeList.end(); ++it) {
           if(*it == status.MPI_SOURCE) {
@@ -1497,13 +1526,21 @@ void master(int argc, char **argv, char **envp) {
            }
         }
 
+				//also remove from offloadReadyList if it exists
+				for(auto it = offloadActiveList.begin(); it != offloadActiveList.end(); ++it) {
+  				if (*it == status.MPI_SOURCE) {
+    				offloadActiveList.erase(it);
+    				break;
+ 					}
+				}
+
         masterLog << "WORKER->MASTER: FINISH ID:"<<status.MPI_SOURCE<<"\n";
         masterLog << "WORKER->MASTER: FREELIST SIZE:"<<freeList.size()<<"\n";
-        masterLog.flush();
+        if(FLUSH) masterLog.flush();
         //if all workers finish then shut down the system
         if(freeList.size() == (num_cores-2)) {
           masterLog << "MASTER: ALL WORKERS FINISHED \n";
-          masterLog.flush();
+          if(FLUSH) masterLog.flush();
           
           //Kill all the workers
           char dummy;
@@ -1526,16 +1563,66 @@ void master(int argc, char **argv, char **envp) {
         for(int x=2; x<num_cores; ++x) {
           MPI_Send(&dummy, 1, MPI_CHAR, x, KILL, MPI_COMM_WORLD);
         }
+      } else if(status.MPI_TAG == READY_TO_OFFLOAD) {
+        //masterLog << "WORKER->MASTER: READY TO OFFLOAD:"<<status.MPI_SOURCE<<"\n";
+        offloadReadyList.push_back(status.MPI_SOURCE);
+      } else if(status.MPI_TAG == NOT_READY_TO_OFFLOAD) {
+        bool found2Erase=false;
+        //masterLog << "WORKER->MASTER: NOT READY TO OFFLOAD:"<<status.MPI_SOURCE<<"\n";
+        for(auto it=offloadReadyList.begin(); it!=offloadReadyList.end(); ++it) {
+          if(*it==status.MPI_SOURCE) {
+            offloadReadyList.erase(it);
+            found2Erase=true;
+            break;
+          }
+        }
+        assert(found2Erase);
+      } else if(status.MPI_TAG == OFFLOAD_RESP) {
+				masterLog << "WORKER->MASTER: OFFLOAD RCVD ID:"<<status.MPI_SOURCE<<" Length:"<<count<<"\n";
+				if(FLUSH) masterLog.flush();
+
+				//Removing the offload active list worker 
+				for(auto it = offloadActiveList.begin(); it != offloadActiveList.end(); ++it) {
+  				if (*it == status.MPI_SOURCE) {
+    				offloadActiveList.erase(it);
+						break;
+					}
+				}
+
+				//Send the offloaded work to the free worker 
+				if(count>4) {
+					//something should exist in free list
+					assert(freeList.size() > 0);
+  				unsigned int pickedWorker = freeList.front();
+  				masterLog << "MASTER->WORKER: PREFIX_TASK_SEND ID:"<<pickedWorker<<" Length:"<<count<<"\n";
+  				MPI_Send(buffer, count, MPI_CHAR, pickedWorker, START_PREFIX_TASK, MPI_COMM_WORLD);
+  				masterLog << "MASTER->WORKER: START_WORK ID:"<<pickedWorker<<"\n";
+  				//pushing the worker busy list
+  				busyList.push_back(pickedWorker);
+ 	 				freeList.pop_front();
+				}		
+				offloadActive = false;	 
+      } 
+      else {
+        //should not see any tags here
+        std::cout << "ILLEGAL TAG: "<<status.MPI_TAG<<" "<<status.MPI_SOURCE<<"\n";
+        std::cout.flush();
+        bool ok = false;
+        (void) ok;
+        assert(ok && "MASTER received an illegal tag"); 
       }
     }
 
-    //if the freelist has some idle workers ask some busy worker to offload
-    if(lb && (freeList.size()>0) && (freeList.size()<(num_cores-2))) {
+    //if some workers are ready to offload and freelist has some workers
+		//offload some stuff
+    if(lb && (freeList.size()>0) && (freeList.size()<(num_cores-2))
+        && (offloadReadyList.size()>0) && !offloadActive) {
+
       //pick out the worker that has been busy the longest and to whom an
       //offload request in not yet sent
       bool foundWorker2Offload = false;
       unsigned int worker2offload;
-      for(auto it = busyList.begin(); it != busyList.end(); ++it) {
+      for(auto it = offloadReadyList.begin(); it != offloadReadyList.end(); ++it) {
         bool offloadAlreadySent = false;
         for(auto it2 = offloadActiveList.begin(); it2 < offloadActiveList.end(); ++it2) {
           if(*it == *it2) {
@@ -1552,102 +1639,14 @@ void master(int argc, char **argv, char **envp) {
       }
       //found a valid busy worker
       if(foundWorker2Offload) {
-        int dummyVal=0;
-        MPI_Request offloadReq;
         MPI_Status offloadStatus;
-        MPI_Send(&dummyVal, 1, MPI_INT, worker2offload, OFFLOAD, MPI_COMM_WORLD);
+        char dummyBuff;
+        MPI_Send(&dummyBuff, 1, MPI_CHAR, worker2offload, OFFLOAD, MPI_COMM_WORLD);
         masterLog << "MASTER->WORKER: OFFLOAD_SENT ID:"<<worker2offload<<"\n";
-        masterLog.flush();
-
-        //Recieve the offloaded work
-        MPI_Probe(worker2offload, MPI_ANY_TAG, MPI_COMM_WORLD, &status2);
-        int count;
-        MPI_Get_count(&status2, MPI_CHAR, &count);
-        if(status2.MPI_TAG == OFFLOAD_RESP) {
-          std::deque<unsigned char> buffer;
-          buffer.resize(count);
-          MPI_Recv(&buffer[0], count, MPI_CHAR, worker2offload, OFFLOAD_RESP, MPI_COMM_WORLD, &status2);
-          masterLog << "WORKER->MASTER: OFFLOAD RCVD ID:"<<status2.MPI_SOURCE<<" Length:"<<count<<"\n";
-          //for(int x=0; x<count; x++)
-            //masterLog <<buffer[x];
-          //masterLog<<"\n";
-          masterLog.flush();
-
-          //Removing the offload active list worker 
-          for(auto it = offloadActiveList.begin(); it != offloadActiveList.end(); ++it) {
-            if (*it == worker2offload) {
-              offloadActiveList.erase(it);
-              break;
-            }
-          }
-
-          //Send the offloaded work to the free worker 
-          if(buffer[0]!='x') {
-            //picking up thr worker that has been idle the longest
-            unsigned int pickedWorker = freeList.front();
-            freeList.pop_front();
-            masterLog << "MASTER->WORKER: PREFIX_TASK_SEND ID:"<<pickedWorker<<" Length:"<<count<<"\n";
-            MPI_Send(&buffer[0], count, MPI_CHAR, pickedWorker, START_PREFIX_TASK, MPI_COMM_WORLD);
-            masterLog << "MASTER->WORKER: START_WORK ID:"<<pickedWorker<<"\n";
-            //pushing the worker busy list
-            busyList.push_back(pickedWorker);
-          } 
-          auto wrkr = busyList.front();
-          busyList.pop_front();
-          busyList.push_back(wrkr); 
-        } else if(status2.MPI_TAG == FINISH) {
-          char dumm;
-          MPI_Recv(&dumm, 1, MPI_CHAR, worker2offload, FINISH, MPI_COMM_WORLD, &status2);
-	       	bool ffound=0;
-
-					for(auto it = offloadActiveList.begin(); it != offloadActiveList.end(); ++it) {
-  					if (*it == worker2offload) {
-    					offloadActiveList.erase(it);
-   					 	break;
-  					}
-					}
-
-       		for(auto it=freeList.begin(); it!=freeList.end(); ++it) {
-         		if(*it == status.MPI_SOURCE) {
-           		ffound=1;
-           		break;
-         		}
-       		}
-       		if(!ffound) freeList.push_back(status.MPI_SOURCE);
-
-       		for(auto it = busyList.begin(); it != busyList.end(); ++it) {
-         		if (*it == status.MPI_SOURCE) {
-          		busyList.erase(it);
-           		break;
-          	}
-       		}	
-
-       		masterLog << "WORKER->MASTER: FINISH ID:"<<status.MPI_SOURCE<<"\n";
-       		masterLog.flush();
-       		//if all workers finish then shut down the system
-       		if(freeList.size() == (num_cores-2)) {
-        		masterLog << "MASTER: ALL WORKERS FINISHED \n";
-         		masterLog.flush();
-
-         		//Kill all the workers
-         		char dummy;
-         		for(int x=2; x<num_cores; ++x) {
-            	 MPI_Send(&dummy, 1, MPI_CHAR, x, KILL, MPI_COMM_WORLD);
-         		}
-
-         		masterLog << "MASTER_ELAPSED: \n";
-         		time::Span elapsed_time2(time::getWallTime() - stTime);
-         		masterLog << "Time: "<<elapsed_time2<<"\n";
-         		masterLog.close();
-
-         		for(int x=2; x<num_cores; ++x) {
-           		MPI_Recv(&dummy, 1, MPI_CHAR, x, KILL_COMP, MPI_COMM_WORLD, &status2);
-         		}
-         		MPI_Abort(MPI_COMM_WORLD, -1);
-        	} 
-      	}
-    	} 
-  	}
+        if(FLUSH) masterLog.flush();
+				offloadActive = true;
+      }
+    }
 	}
 }
 
@@ -1656,8 +1655,8 @@ void slave(int argc, char **argv, char **envp) {
   MPI_Status status;
   char result;
   std::deque<std::string> dummyworkList;
+  MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
   while(true) {
-    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
     //trying to check the TAG of incoming message
     MPI_Status status;
     MPI_Probe(0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
@@ -1684,6 +1683,8 @@ void slave(int argc, char **argv, char **envp) {
       return;
 
     } else if(status.MPI_TAG == NORMAL_TASK) {
+      char buffer;
+  		MPI_Recv(&buffer, count, MPI_CHAR, MASTER_NODE, NORMAL_TASK, MPI_COMM_WORLD, &status);
       std::cout << "Process: "<<world_rank<<" Normal Task "<<"Prefix Depth: "<<phase2Depth<<"\n";
       std::vector<unsigned char> recvTest;
       recvTest.resize(count);
@@ -1693,12 +1694,12 @@ void slave(int argc, char **argv, char **envp) {
       return;
 
     } else if(status.MPI_TAG == OFFLOAD) {
-  		int count, buffer;
-  		MPI_Get_count(&status, MPI_INT, &count);
-  		MPI_Recv(&buffer, count, MPI_INT, MASTER_NODE, OFFLOAD, MPI_COMM_WORLD, &status);
-  		std::vector<unsigned char> packet2send;
-  		packet2send.push_back('x');
-  		MPI_Send(&packet2send[0], packet2send.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
+      char buffer;
+  		MPI_Recv(&buffer, count, MPI_CHAR, MASTER_NODE, OFFLOAD, MPI_COMM_WORLD, &status);
+      std::cout << "Caught the offload here: "<<world_rank<<"\n";
+      std::cout.flush();
+      std::string pkt2Send = "x";
+  		MPI_Send(pkt2Send.c_str(), pkt2Send.length(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
     }
   }
 }
@@ -1982,6 +1983,8 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
     std::string output_dir_file;
     std::string pthfile;
+
+    interpreter->enableLoadBalancing(lb);
 
     interpreter->setSearchMode(searchMode);
     pthfile = handler->getOutputDir()+"_pathFile_"+std::to_string(x);
