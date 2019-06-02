@@ -109,6 +109,8 @@ Searcher *klee::constructUserSearcher(Executor &executor, std::string searchMode
   }
   else if(searchMode=="RAND") {
       searcher = getNewSearcher(Searcher::RandomState, executor);
+  } else if(searchMode=="COVNEW") {
+    searcher = getNewSearcher(Searcher::NURS_CovNew, executor);
   }
 
   /*Searcher *searcher = getNewSearcher(CoreSearch[0], executor);

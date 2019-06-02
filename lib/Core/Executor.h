@@ -393,8 +393,8 @@ private:
   bool addTest2WorkList(ExecutionState &state);
   bool addTestName2WorkList(ExecutionState &state);
   //ExecutionState* offLoad(bool &valid);
-  ExecutionState* offloadFromStatesVector(bool &valid);
-  void check2Offload();
+  ExecutionState* offloadFromStatesVector(ExecutionState* current, bool &valid);
+  void check2Offload(ExecutionState *current);
   void initializePrefixTestData();
   virtual void initializeTestInputData(std::vector<std::pair<std::string, std::vector<unsigned char>>> &testInputs);
 

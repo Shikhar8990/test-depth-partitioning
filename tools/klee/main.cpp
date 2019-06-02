@@ -81,12 +81,13 @@ using namespace klee;
 
 #define ENABLE_CLEANUP false
 #define MASTER_NODE 0
-#define FLUSH true
+#define FLUSH false
 
 enum searchMode{
   DFS,
   BFS,
-  RAND
+  RAND,
+  COVNEW
 };
 
 namespace klee {
@@ -1321,6 +1322,10 @@ std::string getNewSearch() {
     return "DFS";
   } else if (searchPolicy == "RAND") {
     return "RAND";
+  } else if (searchPolicy == "COVNEW") {
+    return "COVNEW";
+  } else {
+    return "DFS";
   }
 }
 

@@ -46,6 +46,7 @@ namespace klee {
                         const std::vector<ExecutionState *> &removedStates) = 0;
 
     virtual bool empty() = 0;
+    virtual int statesSize() = 0;
 
     // prints name of searcher as a klee_message()
     // TODO: could probably make prettier or more flexible
@@ -98,6 +99,7 @@ namespace klee {
                 const std::vector<ExecutionState *> &addedStates,
                 const std::vector<ExecutionState *> &removedStates);
     bool empty() { return states.empty(); }
+    int statesSize() { return states.size(); }
     bool atleast2states() { return (states.size()>1?true:false); }
     void printName(llvm::raw_ostream &os) {
       os << "DFSSearcher\n";
@@ -123,6 +125,7 @@ namespace klee {
     void insertIntoDepthStateMap(ExecutionState * current);
     void removeFromDepthStateMap(ExecutionState* current);
     void updateDepthStateMap(ExecutionState* current, int oldDepth);
+    int statesSize() { return states.size(); }
     bool empty() { return states.empty(); }
     void printName(llvm::raw_ostream &os) {
       os << "BFSSearcher\n";
@@ -144,6 +147,7 @@ namespace klee {
     void printName(llvm::raw_ostream &os) {
       os << "RandomSearcher\n";
     }
+    int statesSize() { return states.size(); }
   };
 
   class WeightedRandomSearcher : public Searcher {
@@ -176,6 +180,7 @@ namespace klee {
                 const std::vector<ExecutionState *> &addedStates,
                 const std::vector<ExecutionState *> &removedStates);
     bool empty();
+    int statesSize() { return 0;}
     void printName(llvm::raw_ostream &os) {
       os << "WeightedRandomSearcher::";
       switch(type) {
@@ -205,6 +210,7 @@ namespace klee {
                 const std::vector<ExecutionState *> &addedStates,
                 const std::vector<ExecutionState *> &removedStates);
     bool empty();
+    int statesSize() { return 0;}
     void printName(llvm::raw_ostream &os) {
       os << "RandomPathSearcher\n";
     }
@@ -233,6 +239,7 @@ namespace klee {
       baseSearcher->update(current, addedStates, removedStates);
     }
     bool empty() { return baseSearcher->empty(); }
+    int statesSize() { return 0;}
     void printName(llvm::raw_ostream &os) {
       os << "MergingSearcher\n";
     }
@@ -261,6 +268,7 @@ namespace klee {
                 const std::vector<ExecutionState *> &addedStates,
                 const std::vector<ExecutionState *> &removedStates);
     bool empty() { return baseSearcher->empty(); }
+    int statesSize() { return 0;}
     void printName(llvm::raw_ostream &os) {
       os << "<BatchingSearcher> timeBudget: " << timeBudget
          << ", instructionBudget: " << instructionBudget
@@ -288,6 +296,7 @@ namespace klee {
                 const std::vector<ExecutionState *> &addedStates,
                 const std::vector<ExecutionState *> &removedStates);
     bool empty() { return baseSearcher->empty() && pausedStates.empty(); }
+    int statesSize() { return 0;}
     void printName(llvm::raw_ostream &os) {
       os << "IterativeDeepeningTimeSearcher\n";
     }
@@ -311,6 +320,7 @@ namespace klee {
                 const std::vector<ExecutionState *> &addedStates,
                 const std::vector<ExecutionState *> &removedStates);
     bool empty() { return searchers[0]->empty(); }
+    int statesSize() { return 0;}
     void printName(llvm::raw_ostream &os) {
       os << "<InterleavedSearcher> containing "
          << searchers.size() << " searchers:\n";

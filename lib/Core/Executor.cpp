@@ -108,7 +108,7 @@
 
 #define OFFLOAD_READY_THRESH 4
 
-#define ENABLE_LOGGING true
+#define ENABLE_LOGGING false
 #define ENABLE_DEBUG false
 
 #define dumpSingleFile false
@@ -535,8 +535,8 @@ Executor::setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
 
   specialFunctionHandler->bind();
 
-  //if (StatsTracker::useStatistics() || userSearcherRequiresMD2U()) {
-  if (false) {
+  if (StatsTracker::useStatistics() || userSearcherRequiresMD2U()) {
+  //if (false) {
     statsTracker = 
       new StatsTracker(*this,
                        interpreterHandler->getOutputFilename("assembly.ll"),
@@ -921,7 +921,9 @@ int Executor::branch(ExecutionState &state,
         std::vector<ExecutionState *> remStates;
         remStates.push_back(result[0]);
         testSwitchRemovedState = result[0];
-        searcher->update(nullptr, std::vector<ExecutionState *>(), remStates);
+        searcher->update(result[0], std::vector<ExecutionState *>(), remStates);
+        //logFile << "Successful Removing Case0 state\n";
+        //logFile.flush();
         //find the state that we came in with in the states vector
         auto ii = states.find(result[0]);
         assert(ii != states.end()); //can not be case as the state has to exist
@@ -937,7 +939,9 @@ int Executor::branch(ExecutionState &state,
           } else {
             logFile<<"Adding state: "<<result[i]<<" "<<result[i]->actDepth<<"\n";
             logFile.flush();
-            addedStates.push_back(result[i]);
+            if(satCase != 0) {
+              addedStates.push_back(result[i]);
+            }
           }
         }
         if(satCase > 0) { 
@@ -949,7 +953,9 @@ int Executor::branch(ExecutionState &state,
 					std::vector<ExecutionState *> remStates;
 					remStates.push_back(result[0]);
           testSwitchRemovedState = result[0];
-					searcher->update(nullptr, std::vector<ExecutionState *>(), remStates);
+					searcher->update(result[0], std::vector<ExecutionState *>(), remStates);
+          //logFile << "Successful Removing Case0 state\n";
+          //logFile.flush();
 					//find the state that we came in with in the states vector
 					auto ii = states.find(result[0]);
 					assert(ii != states.end()); //can not be case as the state has to exist
@@ -1303,7 +1309,7 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
     if(ENABLE_LOGGING) {
       logFile << "New State Due to Branch at Depth: "<<"Old State: "<<&current
         <<" New State: "<<falseState<<" "<<falseState->depth<<" "
-        <<falseState->actDepth<<" "<<falseState<<"\n";
+        <<falseState->actDepth<<"\n";
     }
 
     if (it != seedMap.end()) {
@@ -3017,7 +3023,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
   }
 }
 
-void Executor::check2Offload() {
+void Executor::check2Offload(ExecutionState *current) {
   int flag;
   MPI_Status status;
   MPI_Iprobe(MASTER_NODE, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
@@ -3032,7 +3038,7 @@ void Executor::check2Offload() {
         logFile.flush();
       }
       bool valid;
-      ExecutionState* state2Remove = offloadFromStatesVector(valid);
+      ExecutionState* state2Remove = offloadFromStatesVector(current, valid);
 
       if(valid) { 
         //create a test from the test
@@ -3042,19 +3048,15 @@ void Executor::check2Offload() {
         std::string testName = outputDir+"/"+filename.str()+","+std::to_string((*state2Remove).depth);
         std::vector<char> pkt2Send(testName.begin(), testName.end());
         if(ENABLE_LOGGING) {
-          logFile << "Offloading\n";
+          logFile << "Offloading: "<<state2Remove<<"\n";
           logFile << "Packet to Send: "<<testName<<" Length:"<<pkt2Send.size()<<"\n";
           printStatePath(*state2Remove, logFile, "Offloaded State Path:");
           logFile.flush();
         }
-        //MPI_Send(&pkt2Send[0], pkt2Send.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
-        //MPI_Send(pkt2Send.data(), pkt2Send.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
         MPI_Send(testName.c_str(), testName.length(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
-        //terminateState(*state2Remove);
 				std::vector<ExecutionState *> remStates;
 				remStates.push_back(state2Remove);
 				searcher->update(nullptr, std::vector<ExecutionState *>(), remStates);
-				//find the state that we came in with in the states vector
 				auto ii = states.find(state2Remove);
 				assert(ii != states.end()); //can not be case as the state has to exist
 				states.erase(ii); //remove the state from states vector
@@ -3069,8 +3071,6 @@ void Executor::check2Offload() {
         std::vector<char> pkt2Send;
         pkt2Send.push_back('x');
         std::string testName = "x";
-        //MPI_Send(&pkt2Send[0], pkt2Send.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
-        //MPI_Send(pkt2Send.data(), pkt2Send.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
         MPI_Send(testName.c_str(), testName.length(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
       }
       waiting4OffloadReq = false;
@@ -3089,7 +3089,7 @@ void Executor::check2Offload() {
 
 void Executor::updateStates(ExecutionState *current) {
 
-	if(enableLB) check2Offload();
+	if(enableLB) check2Offload(current);
 
   if (searcher) {
     bool foundAlreadyRemState=false;
@@ -3113,12 +3113,16 @@ void Executor::updateStates(ExecutionState *current) {
 
       } 
     }
-    searcher->update(current, addedStates, removedStates);
+    if(testSwitchRemovedState) {
+      searcher->update(nullptr, addedStates, removedStates);
+    } else {
+      searcher->update(current, addedStates, removedStates);
+    }
 		searcher->update(nullptr, continuedStates, pausedStates);
 		pausedStates.clear();
 		continuedStates.clear();
     if(foundAlreadyRemState) {
-      //put the state back in
+      //put the state back in for the ptree crap
       removedStates.push_back(testSwitchRemovedState);
       states.insert(testSwitchRemovedState);
     }
@@ -3151,7 +3155,7 @@ void Executor::updateStates(ExecutionState *current) {
   testSwitchRemovedState = NULL;
 }
 
-ExecutionState* Executor::offloadFromStatesVector(bool &valid) {
+ExecutionState* Executor::offloadFromStatesVector(ExecutionState* current, bool &valid) {
   valid = false;
   //this assert might not always be true
   //assert(ready2Offload);
@@ -3159,6 +3163,7 @@ ExecutionState* Executor::offloadFromStatesVector(bool &valid) {
   if(ready2Offload) {
     //look for the first non recovery and non suspended state
     for(auto it=states.begin(); it!=states.end(); ++it) {
+      if(current == *it) continue; //COVNEW issue, cant offload the state being exec.
       bool isRemoved=false;
       for(auto it2=removedStates.begin(); it2!=removedStates.end(); ++it2) {
         if(*it == *it2) {
@@ -3384,18 +3389,23 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
   searcher->update(0, newStates, std::vector<ExecutionState *>());
   branchLevel2Halt = explorationDepth;
   haltExecution = false;
-  int prev_statedepth=0;
 
   while(!haltFromMaster) {
+    int prev_statedepth=0;
     while (!states.empty() && !haltExecution) { 
 			ExecutionState &state = searcher->selectState();
+      if(prev_statedepth!=state.actDepth && ENABLE_LOGGING) {
+        logFile<<"Sd:"<<state.actDepth<<" "<<&state<<"\n";
+        logFile.flush();
+        prev_statedepth = state.actDepth;
+      }
       if(enableBranchHalt) {
         if(coreId==0) {
           if(states.size() >= branchLevel2Halt) {
-            if(states.size() > branchLevel2Halt) {
-              std::cout << "States size: "<<states.size() << " "<<branchLevel2Halt<<"\n";
+            //if(states.size() > branchLevel2Halt) {
+            //  std::cout << "States size: "<<states.size() << " "<<branchLevel2Halt<<"\n";
               //assert(false); //seeing if I hit this case
-            }
+            //}
             haltExecution = true;
             haltFromMaster = true;
           }
@@ -3487,7 +3497,7 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
           logFile << "Process1: "<<coreId<<" Prefix Task: Length:"<<count<<"\n";
           logFile.flush();
         }
-
+        recv_prefix[count] = '\0';
       	//std::string pktest(recv_prefix.begin(), recv_prefix.end());
       	std::string pktest(recv_prefix);
         if(ENABLE_LOGGING) {
@@ -3553,6 +3563,7 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
               printStatePath(**rit, logFile, "Resume State Path:");
               logFile.flush();
             }
+            assert(states.size() == 0);
             states.insert(*rit);
             (*rit)->originatingWorker = origWorker;
             assert(states.size() == 1);
