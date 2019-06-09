@@ -1400,7 +1400,7 @@ void master(int argc, char **argv, char **envp) {
       masterLog << "Time: "<<elapsed_time1<<"\n";
     }
     masterLog.close();
-    std::cout << "HUHU\n";
+    //std::cout << "HUHU\n";
     MPI_Abort(MPI_COMM_WORLD, -1);
   }
 
@@ -1433,8 +1433,7 @@ void master(int argc, char **argv, char **envp) {
   char dummyRecv;
   auto currPrefix = workList.begin();
   while(currPrefix != workList.end() && (workList.size()>0)) {
-    MPI_Recv(&dummyRecv, 1, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, 
-      MPI_COMM_WORLD, &status);
+    MPI_Recv(&dummyRecv, 1, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
     if(status.MPI_TAG == FINISH) {
       for(auto it = busyList.begin(); it != busyList.end(); ++it) {
         if (*it == status.MPI_SOURCE) {
@@ -1460,8 +1459,7 @@ void master(int argc, char **argv, char **envp) {
       masterLog << "WORKER->MASTER:  BUG FOUND:"<<status.MPI_SOURCE<<"\n";
       time::Span elapsed_time1(time::getWallTime() - stTime);
       masterLog << "Time: "<<elapsed_time1<<"\n";
-      masterLog.close();
-  
+      masterLog.close(); 
       char dummy;
       for(int x=2; x<num_cores; ++x) {
         MPI_Send(&dummy, 1, MPI_CHAR, x, KILL, MPI_COMM_WORLD);
@@ -1611,7 +1609,7 @@ void master(int argc, char **argv, char **envp) {
       else {
         //should not see any tags here
         std::cout << "ILLEGAL TAG: "<<status.MPI_TAG<<" "<<status.MPI_SOURCE<<"\n";
-        std::cout.flush();
+        if(FLUSH) std::cout.flush();
         bool ok = false;
         (void) ok;
         assert(ok && "MASTER received an illegal tag"); 
@@ -1702,7 +1700,7 @@ void slave(int argc, char **argv, char **envp) {
       char buffer;
   		MPI_Recv(&buffer, count, MPI_CHAR, MASTER_NODE, OFFLOAD, MPI_COMM_WORLD, &status);
       std::cout << "Caught the offload here: "<<world_rank<<"\n";
-      std::cout.flush();
+      if(FLUSH) std::cout.flush();
       std::string pkt2Send = "x";
   		MPI_Send(pkt2Send.c_str(), pkt2Send.length(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
     }

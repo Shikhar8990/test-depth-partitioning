@@ -106,7 +106,8 @@
 
 #define MASTER_NODE 0
 
-#define OFFLOAD_READY_THRESH 4
+#define OFFLOAD_READY_THRESH 8
+#define OFFLOAD_NOT_READY_THRESH 4
 
 #define ENABLE_LOGGING false
 #define ENABLE_DEBUG false
@@ -906,9 +907,11 @@ int Executor::branch(ExecutionState &state,
         if(ENABLE_LOGGING) logFile << "Suspending all but default switch case states\n";
         for(int i=0; i<N-1; ++i) {
           rangingSuspendedStates.push_back(result[i]);
-          logFile<<"Suspending state: "<<result[i]<<" "<<result[i]->actDepth<<"\n";
-          printStatePath(*result[i], logFile, "Suspended State Path:");
-          logFile.flush();
+          if(ENABLE_LOGGING) {
+            logFile<<"Suspending state: "<<result[i]<<" "<<result[i]->actDepth<<"\n";
+            printStatePath(*result[i], logFile, "Suspended State Path:");
+            logFile.flush();
+          }
         } 
         addedStates.push_back(result[N-1]);
         // remove the state we came with from the searcher 
@@ -922,6 +925,7 @@ int Executor::branch(ExecutionState &state,
         remStates.push_back(result[0]);
         testSwitchRemovedState = result[0];
         searcher->update(result[0], std::vector<ExecutionState *>(), remStates);
+        //searcher->update(nullptr, std::vector<ExecutionState *>(), remStates);
         //logFile << "Successful Removing Case0 state\n";
         //logFile.flush();
         //find the state that we came in with in the states vector
@@ -932,13 +936,17 @@ int Executor::branch(ExecutionState &state,
         if(ENABLE_LOGGING) logFile << "Suspending all but switch case state:"<<satCase<<"\n";
         for(int i=0; i<N; ++i) {
           if(i != satCase) {
-            logFile<<"Suspending state: "<<result[i]<<" "<<result[i]->actDepth<<"\n";
-            printStatePath(*result[i], logFile, "Suspended State Path:");
-            logFile.flush();
+            if(ENABLE_LOGGING) {
+              logFile<<"Suspending state: "<<result[i]<<" "<<result[i]->actDepth<<"\n";
+              printStatePath(*result[i], logFile, "Suspended State Path:");
+              logFile.flush();
+            }
             rangingSuspendedStates.push_back(result[i]);
           } else {
-            logFile<<"Adding state: "<<result[i]<<" "<<result[i]->actDepth<<"\n";
-            logFile.flush();
+            if(ENABLE_LOGGING) {
+              logFile<<"Adding state: "<<result[i]<<" "<<result[i]->actDepth<<"\n";
+              logFile.flush();
+            }
             if(satCase != 0) {
               addedStates.push_back(result[i]);
             }
@@ -954,6 +962,7 @@ int Executor::branch(ExecutionState &state,
 					remStates.push_back(result[0]);
           testSwitchRemovedState = result[0];
 					searcher->update(result[0], std::vector<ExecutionState *>(), remStates);
+					//searcher->update(nullptr, std::vector<ExecutionState *>(), remStates);
           //logFile << "Successful Removing Case0 state\n";
           //logFile.flush();
 					//find the state that we came in with in the states vector
@@ -3442,7 +3451,7 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
       //offload situation of this worker
       if((coreId!=0) && enableLB) {
         char dummy;
-        if(ready2Offload && (states.size()<OFFLOAD_READY_THRESH)) {
+        if(ready2Offload && (states.size()<OFFLOAD_NOT_READY_THRESH)) {
           //can not offload now
           MPI_Send(&dummy, 1, MPI_CHAR, 0, NOT_READY_TO_OFFLOAD, MPI_COMM_WORLD);
           ready2Offload=false;
@@ -3785,7 +3794,7 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
     interpreterHandler->processTestCase(state, 0, 0);
   //logFile<<"TestCase: "<<state.depth<<" "<<state.actDepth<<"\n";
   //logFile.flush();
-  if(ENABLE_LOGGING) {
+  /*if(ENABLE_LOGGING) {
     lastTestPath.clear();
     pathWriter->readStream(getPathStreamID(state), lastTestPath);
     for (auto I = lastTestPath.begin(); I != lastTestPath.end(); ++I) {
@@ -3793,7 +3802,7 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
     }
     brhistFile << "\n";
     brhistFile.flush();
-  }
+  }*/
   terminateState(state);
 }
 
