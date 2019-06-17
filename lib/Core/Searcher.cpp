@@ -139,6 +139,7 @@ ExecutionState* BFSSearcher::getState2Offload2() {
 
 ExecutionState &BFSSearcher::selectState() {
   //std::cout<<"YT Calling Select State Minimum Depth: "<<currentMinDepth<<"\n";
+  //std::cout.flush();
   assert(depthStatesMap.find(currentMinDepth) != depthStatesMap.end());
   return *((depthStatesMap[currentMinDepth]).front());
 }
@@ -155,19 +156,20 @@ void BFSSearcher::update(ExecutionState *current,
     const std::vector<ExecutionState *> &removedStates) {
     
   //std::cout << "SS_Searcher: Calling updatestate BFS \n";
+  //std::cout.flush();;
   if(current != nullptr) { 
     auto mit = depthMap.find(current);
     if (mit == depthMap.end()) {
       //if the state doesnt exist for some reason just put it 
       //in and update it
-      depthMap[current] = current->actDepth;
-      insertIntoDepthStateMap(current);
-      //std::cout << "YT Inserting State "<<current<<" at depth "<<current->depth<<"\n";
+      //depthMap[current] = current->actDepth;
+      //insertIntoDepthStateMap(current);
+      //std::cout << "YT Inserting State "<<current<<" at depth "<<current->actDepth<<"\n";
     } else {
       //if it exists and the depth has changed, if yes update it
       if (depthMap[current] != current->actDepth) {
         //std::cout << "YT Updating State "<<current<<" from depth "<<depthMap[current]
-        //          << " to depth " << current->depth<<"\n";
+        //          << " to depth " << current->actDepth<<"\n";
         updateDepthStateMap(current, depthMap[current]);
         depthMap[current] = current->actDepth;
       } 
@@ -188,38 +190,51 @@ void BFSSearcher::update(ExecutionState *current,
 
 void BFSSearcher::insertIntoDepthStateMap(ExecutionState* current) {
   int depth = current->actDepth;
+  if(depthMap.size() == 0) { //first state
+    currentMinDepth = current->actDepth;
+    //depthMap.clear();
+    //depthStatesMap.clear();
+  }
   depthMap[current] = depth;
   if(depthStatesMap.find(depth) == depthStatesMap.end()) {
     std::deque<ExecutionState*> newListofStates;
     newListofStates.push_back(current);
     depthStatesMap[depth] = newListofStates;
-    //std::cout << "YT Adding first state "<<current<<" depth "<<depth<<"\n";
+    //std::cout << "YT Adding first state "<<current<<" depth "<<depth<<" "<<current<<"\n";
+    //std::cout.flush();
   } else {
     auto listofStates= depthStatesMap[depth];
     listofStates.push_back(current);
     depthStatesMap[depth] = listofStates;
+    //std::cout << "YT Adding state "<<current<<" depth "<<depth<<" "<<current<<"\n";
+    //std::cout.flush();
   }
 }
 
 void BFSSearcher::removeFromDepthStateMap(ExecutionState* current) {
+  //assert(depthMap.find(current) != depthMap.end());
+  int oldDepth = depthMap[current];
   int depth = current->actDepth;
-  assert(depthStatesMap.find(depth) != depthStatesMap.end());
-  auto listofStates = depthStatesMap[depth];
+  //std::cout << "YT Trying Removing state "<<current<<" depth "<<depth<<" "<<current<<"\n";
+  //std::cout.flush();
+  assert(depthStatesMap.find(oldDepth) != depthStatesMap.end());
+  auto listofStates = depthStatesMap[oldDepth];
   auto it = std::find(listofStates.begin(), listofStates.end(), current);
   assert(it!=listofStates.end());
   listofStates.erase(it);
   //here check if the list is empty
   if(listofStates.size() == 0) {
-    depthStatesMap.erase(depth);
+    depthStatesMap.erase(oldDepth);
     //std::cout << "YT Removing last state "<<current<<" depth "<<depth<<"\n";
-    if (depth == currentMinDepth) {
+    //std::cout.flush();
+    if (oldDepth == currentMinDepth) {
       currentMinDepth++;
     }
   } else {
-    depthStatesMap[depth] = listofStates;
+    depthStatesMap[oldDepth] = listofStates;
     //std::cout << "YT Removing state "<<current<<" depth "<<depth<<"\n";
+    //std::cout.flush();
   }
-  assert(depthMap.find(current) != depthMap.end());
   depthMap.erase(current);
 }
 

@@ -918,14 +918,17 @@ int Executor::branch(ExecutionState &state,
         //take care of the case when the state one comes in with has to be
         //removed
         if(ENABLE_LOGGING) { 
-          logFile << "Removing Case0 state\n";
+          logFile << "Removing Case0 state "<<result[0]<<" "<<result[0]->actDepth<<"\n";
           logFile.flush();
         }
         std::vector<ExecutionState *> remStates;
         remStates.push_back(result[0]);
         testSwitchRemovedState = result[0];
-        searcher->update(result[0], std::vector<ExecutionState *>(), remStates);
-        //searcher->update(nullptr, std::vector<ExecutionState *>(), remStates);
+        if(searchMode == "COVNEW") {
+          searcher->update(result[0], std::vector<ExecutionState *>(), remStates);
+        } else {
+          searcher->update(nullptr, std::vector<ExecutionState *>(), remStates);
+        }
         //logFile << "Successful Removing Case0 state\n";
         //logFile.flush();
         //find the state that we came in with in the states vector
@@ -955,14 +958,18 @@ int Executor::branch(ExecutionState &state,
         if(satCase > 0) { 
 					//take care of the case when the state one comes in with has to be removed 
 					if(ENABLE_LOGGING) {
-          	logFile << "Removing Case0 state\n";
+          	//gFile << "Removing Case0 state\n";
+            logFile << "Removing Case0 state "<<result[0]<<" "<<result[0]->actDepth<<"\n";
           	logFile.flush();
 					}
 					std::vector<ExecutionState *> remStates;
 					remStates.push_back(result[0]);
           testSwitchRemovedState = result[0];
-					searcher->update(result[0], std::vector<ExecutionState *>(), remStates);
-					//searcher->update(nullptr, std::vector<ExecutionState *>(), remStates);
+          if(searchMode == "COVNEW") {
+					  searcher->update(result[0], std::vector<ExecutionState *>(), remStates);
+          } else {
+					  searcher->update(nullptr, std::vector<ExecutionState *>(), remStates);
+          }
           //logFile << "Successful Removing Case0 state\n";
           //logFile.flush();
 					//find the state that we came in with in the states vector
@@ -1157,8 +1164,10 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
           inhibitForking || 
           (MaxForks!=~0u && stats::forks >= MaxForks)) {
 
-	      if (MaxMemoryInhibit && atMemoryLimit)
+	      if (MaxMemoryInhibit && atMemoryLimit) {
 	        klee_warning_once(0, "skipping fork (memory cap exceeded)");
+          haltExecution = true;
+        }
 	      else if (current.forkDisabled)
 	        klee_warning_once(0, "skipping fork (fork disabled on current path)");
 	      else if (inhibitForking)
@@ -3047,7 +3056,15 @@ void Executor::check2Offload(ExecutionState *current) {
         logFile.flush();
       }
       bool valid;
-      ExecutionState* state2Remove = offloadFromStatesVector(current, valid);
+      ExecutionState* state2Remove;
+      //ExecutionState* state2Remove = offloadFromStatesVector(current, valid);
+      if(ready2Offload) {
+        state2Remove = searcher->getState2Offload2();
+        if(state2Remove != NULL) valid=true;
+        else { valid = false; }
+      } else {
+        valid = false;
+      }
 
       if(valid) { 
         //create a test from the test
@@ -3057,10 +3074,12 @@ void Executor::check2Offload(ExecutionState *current) {
         std::string testName = outputDir+"/"+filename.str()+","+std::to_string((*state2Remove).depth);
         std::vector<char> pkt2Send(testName.begin(), testName.end());
         if(ENABLE_LOGGING) {
-          logFile << "Offloading: "<<state2Remove<<"\n";
+          logFile << "Offloading: "<<state2Remove<<" Depth: "<<state2Remove->actDepth<<"\n";
           logFile << "Packet to Send: "<<testName<<" Length:"<<pkt2Send.size()<<"\n";
           printStatePath(*state2Remove, logFile, "Offloaded State Path:");
           logFile.flush();
+          std::cout << "Offloading: "<<state2Remove<<" Depth: "<<state2Remove->actDepth<<"\n";
+          std::cout.flush();
         }
         MPI_Send(testName.c_str(), testName.length(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
 				std::vector<ExecutionState *> remStates;
@@ -3070,7 +3089,10 @@ void Executor::check2Offload(ExecutionState *current) {
 				assert(ii != states.end()); //can not be case as the state has to exist
 				states.erase(ii); //remove the state from states vector
 				rangingSuspendedStates.push_back(state2Remove);
-
+        auto hit = std::find(removedStates.begin(), removedStates.end(), state2Remove);
+        if(hit != removedStates.end()) {
+          removedStates.erase(hit);
+        }
       } else {
         if(ENABLE_LOGGING) {
           logFile << "Offloading\n";
@@ -3145,6 +3167,8 @@ void Executor::updateStates(ExecutionState *current) {
        it != ie; ++it) {
     ExecutionState *es = *it;
     std::set<ExecutionState*>::iterator it2 = states.find(es);
+    logFile<<"Delete State: "<<es<<"\n";
+    logFile.flush();
     assert(it2!=states.end());
     states.erase(it2);
     std::map<ExecutionState*, std::vector<SeedInfo> >::iterator it3 = 
@@ -3172,7 +3196,9 @@ ExecutionState* Executor::offloadFromStatesVector(ExecutionState* current, bool 
   if(ready2Offload) {
     //look for the first non recovery and non suspended state
     for(auto it=states.begin(); it!=states.end(); ++it) {
-      if(current == *it) continue; //COVNEW issue, cant offload the state being exec.
+      if(searchMode == "COVNEW") {
+        if(current == *it) continue; //COVNEW issue, cant offload the state being exec.
+      } 
       bool isRemoved=false;
       for(auto it2=removedStates.begin(); it2!=removedStates.end(); ++it2) {
         if(*it == *it2) {
@@ -3403,7 +3429,14 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
     int prev_statedepth=0;
     while (!states.empty() && !haltExecution) { 
 			ExecutionState &state = searcher->selectState();
+      if(states.find(&state) == states.end()) {
+        logFile << "FUCK: "<<&state<<"\n";
+        logFile.flush();
+        assert(false);
+      }
+      //sert(states.find(&state) != states.end());
       if(prev_statedepth!=state.actDepth && ENABLE_LOGGING) {
+      //if(prev_statedepth!=state.actDepth) {
         logFile<<"Sd:"<<state.actDepth<<" "<<&state<<"\n";
         logFile.flush();
         prev_statedepth = state.actDepth;

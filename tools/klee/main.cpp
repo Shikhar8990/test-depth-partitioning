@@ -81,7 +81,7 @@ using namespace klee;
 
 #define ENABLE_CLEANUP false
 #define MASTER_NODE 0
-#define FLUSH false
+#define FLUSH true
 
 enum searchMode{
   DFS,
