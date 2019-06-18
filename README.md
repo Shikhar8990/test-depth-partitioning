@@ -34,3 +34,5 @@ One of the addtional core acts as a coordinator while the other is used for moni
 is supposed to collect statistics (not yet implemented).  
 
 **mpirun -n 6 /path/to/tdp_build/bin/klee --timeOut=3600 --lb --output-dir=out_prog --phase1Depth=4 --phase2Depth=24 --searchPolicy=DFS ./prog.bc**
+
+For questions, contact Shikhar - shikhar_singh at utexas dot edu
