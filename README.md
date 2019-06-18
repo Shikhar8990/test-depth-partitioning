@@ -23,3 +23,14 @@ Following is the list of TDP specific options
                  should be 0 if using only 1 worker  
 -phase2Depth  : depth at which to terminate execution   
 -searchPolicy : search strategy (BFS, DFS or RAND; COVNEW (coverage search - experimental stage))  
+
+**Sample Command**  
+The following command launched TDP on program with a bit code file named **prog.bc**.  
+TDP is run using 4 worker so we generate 4 initial tests and run it to a timeout of  
+1 hour or a depth of 24 (which ever is first).  
+The search policy is depth first search.  
+Note that when we launch the MPI task using mpirun command, we need two additional cores.  
+One of the addtional core acts as a coordinator while the other is used for monitoring and  
+is supposed to collect statistics (not yet implemented).  
+
+**mpirun -n 6 /path/to/tdp_build/bin/klee --timeOut=3600 --lb --output-dir=out_prog --phase1Depth=4 --phase2Depth=24 --searchPolicy=DFS ./prog.bc**
