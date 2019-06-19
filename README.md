@@ -30,7 +30,7 @@ TDP is run using 4 worker so we generate 4 initial tests and run it to a timeout
 1 hour or a depth of 24 (which ever is first).  
 The search policy is depth first search.  
 Note that when we launch the MPI task using mpirun command, we need two additional cores.  
-One of the addtional core acts as a coordinator while the other is used for monitoring and  
+One of the addtional cores acts as a coordinator while the other is used for monitoring and  
 is supposed to collect statistics (not yet implemented).  
 
 **mpirun -n 6 /path/to/tdp_build/bin/klee --timeOut=3600 --lb --output-dir=out_prog --phase1Depth=4  
