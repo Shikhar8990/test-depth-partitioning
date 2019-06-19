@@ -25,7 +25,7 @@ Following is the list of TDP specific options
 -**searchPolicy** : search strategy (BFS, DFS or RAND; COVNEW (coverage search - experimental stage))  
 
 **Sample Command**  
-The following command launched TDP on program with a bit code file named **prog.bc**.  
+The following command launches TDP on program with a bit code file named **prog.bc**.  
 TDP is run using 4 worker so we generate 4 initial tests and run it to a timeout of  
 1 hour or a depth of 24 (which ever is first).  
 The search policy is depth first search.  
