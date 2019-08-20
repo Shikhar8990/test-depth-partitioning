@@ -1492,14 +1492,16 @@ void master(int argc, char **argv, char **envp) {
   while(true) {
     MPI_Status status;
     int flag, count;
-    char *buffer;
+    //char *buffer;
     //see what the workers are saying
     MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
 
     if(flag) {
       MPI_Get_count(&status, MPI_CHAR, &count);
-      buffer = (char*)malloc(count+1);
-      MPI_Recv(buffer, count, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+      char buffer[count];
+      MPI_Recv(buffer, count, MPI_CHAR, status.MPI_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+      //masterLog << "RECVD something: "<<status.MPI_SOURCE<<" "<<count <<"\n";
+      //masterLog.flush();
       if(status.MPI_TAG == BUG_FOUND) {
         masterLog << "WORKER->MASTER: BUG FOUND:"<<status.MPI_SOURCE<<"\n";
         time::Span elapsed_time1(time::getWallTime() - stTime);
@@ -1935,6 +1937,7 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
       klee_message("KLEE: using %lu seeds\n", seeds.size());
       interpreter->useSeeds(&seeds);
     }
+
     if (RunInDir != "") {
       int res = chdir(RunInDir.c_str());
       if (res < 0) {

@@ -3522,7 +3522,7 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
       MPI_Get_count(&status, MPI_CHAR, &count);
       if(status.MPI_TAG == KILL) {
         char dummy2;
-        MPI_Recv(&dummy2, 1, MPI_CHAR, 0, KILL, MPI_COMM_WORLD, &status);
+        MPI_Recv(&dummy2, 1, MPI_CHAR, MASTER_NODE, KILL, MPI_COMM_WORLD, &status);
         if(ENABLE_LOGGING) {
           logFile<<"KILL Recieved From master when checking for offloads\n";
           logFile.flush();
@@ -3532,14 +3532,15 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
         haltExecution = true;
       } else if (status.MPI_TAG == START_PREFIX_TASK) {
         //std::vector<unsigned char> recv_prefix;
-        char* recv_prefix = (char*)malloc(count+1);
+        //char* recv_prefix = (char*)malloc(count+1);
+        char recv_prefix[count+1];
         //recv_prefix.resize(count);
-        MPI_Recv(recv_prefix, count, MPI_CHAR, 0, START_PREFIX_TASK, MPI_COMM_WORLD, &status);
+        MPI_Recv(recv_prefix, count, MPI_CHAR, MASTER_NODE, START_PREFIX_TASK, MPI_COMM_WORLD, &status);
         if(ENABLE_LOGGING) {
           logFile << "Process1: "<<coreId<<" Prefix Task: Length:"<<count<<"\n";
           logFile.flush();
         }
-        recv_prefix[count] = '\0';
+        recv_prefix[count+1] = '\0';
       	//std::string pktest(recv_prefix.begin(), recv_prefix.end());
       	std::string pktest(recv_prefix);
         if(ENABLE_LOGGING) {
