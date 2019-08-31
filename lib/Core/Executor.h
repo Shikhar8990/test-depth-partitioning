@@ -325,6 +325,9 @@ private:
 
   ///test names worklist
   std::deque<std::string> workListTestName;
+
+  ///test data worklist
+  std::deque<std::vector<unsigned char> > workListTestData; 
   
   std::vector<unsigned char> lastTestPath;
 
@@ -354,6 +357,11 @@ private:
   std::vector<const Array*> testObjects;
   std::vector<std::vector<unsigned char>> testValues;
   Assignment testAssign;
+
+  //moder version crap
+  const Array* arr2;
+  std::vector<unsigned char> modelVal;
+  std::string modelName;
 
   llvm::Function* getTargetFunction(llvm::Value *calledVal,
                                     ExecutionState &state);
@@ -392,6 +400,7 @@ private:
   bool addState2WorkList(ExecutionState &state);
   bool addTest2WorkList(ExecutionState &state);
   bool addTestName2WorkList(ExecutionState &state);
+  int getNumBits(int inNum);
   //ExecutionState* offLoad(bool &valid);
   ExecutionState* offloadFromStatesVector(ExecutionState* current, bool &valid);
   void check2Offload(ExecutionState *current);
@@ -725,7 +734,7 @@ public:
    	      	                     int argc,
     	                           char **argv,
       	                         char **envp,
-        	                       std::deque<std::string> &workListTestName);
+        	                       std::deque<std::vector<unsigned char>> &workListTestName);
   
   /*** Runtime options ***/
 

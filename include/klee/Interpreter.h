@@ -43,6 +43,7 @@ public:
 
 
   virtual void incPathsExplored() = 0;
+  virtual void incTests() = 0;
   virtual unsigned getNumPathsExplored() = 0;
   virtual void resetPathsExplored() = 0;
 
@@ -149,7 +150,7 @@ public:
                                   int argc,
                                   char **argv,
                                   char **envp,
-                                  std::deque<std::string> &workList_main)=0;
+                                  std::deque<std::vector<unsigned char>> &workList_main)=0;
 
   virtual void setPathFile(std::string inPath) = 0;
   virtual void enableRangeChecking() = 0;

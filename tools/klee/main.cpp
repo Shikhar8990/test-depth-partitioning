@@ -81,7 +81,7 @@ using namespace klee;
 
 #define ENABLE_CLEANUP false
 #define MASTER_NODE 0
-#define FLUSH true
+#define FLUSH false
 
 enum searchMode{
   DFS,
@@ -339,6 +339,7 @@ public:
   unsigned getNumTestCases() { return m_numGeneratedTests; }
   unsigned getNumPathsExplored() { return m_pathsExplored; }
   void incPathsExplored() { m_pathsExplored++; }
+  void incTests() { m_numGeneratedTests++; }
   void resetPathsExplored() { m_pathsExplored=0; } 
 
   void setInterpreter(Interpreter *i);
@@ -515,7 +516,7 @@ unsigned KleeHandler::processTestCase(const ExecutionState &state,
   if (!NoOutput && writeOutput) {
     std::vector< std::pair<std::string, std::vector<unsigned char> > > out;
     bool success = m_interpreter->getSymbolicSolution(state, out);
-
+    
     if (!success)
       klee_warning("unable to get symbolic solution, losing test case");
 
@@ -1201,7 +1202,7 @@ bool parseNameLineOption(
 }
 
 int launchKleeInstance(int x, int argc, char **argv, char **envp,
-    std::deque<std::string> &workList,
+    std::deque<std::vector<unsigned char>> &workList,
     std::vector<unsigned char> &prefix, 
     int explorationDepth=0, int mode=NO_MODE, std::string searchMode="BFS");
 void master(int argc, char **argv, char **envp);
@@ -1358,8 +1359,7 @@ void master(int argc, char **argv, char **envp) {
 
   typedef std::vector<std::pair<std::string, std::vector<unsigned char>>> testPacket;
 
-  //std::deque<std::deque<unsigned char>> workList;
-  std::deque<std::string> workList;
+  std::deque<std::vector<unsigned char>> workList;
   std::vector<unsigned char> dummyprefix;
   std::deque<unsigned int> freeList;
   std::deque<unsigned int> offloadActiveList;
@@ -1384,7 +1384,7 @@ void master(int argc, char **argv, char **envp) {
     MPI_Status status4;
     MPI_Send(&dummychar, 1, MPI_CHAR, 2, NORMAL_TASK, MPI_COMM_WORLD);
     MPI_Recv(&dummychar, 1, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status3);
-    std::cout << "HYHY: "<<status3.MPI_SOURCE<<" "<<status3.MPI_TAG<<"\n";
+    //std::cout << "HYHY: "<<status3.MPI_SOURCE<<" "<<status3.MPI_TAG<<"\n";
     if(status3.MPI_TAG == FINISH) {
       masterLog << "MASTER_ELAPSED Normal Mode \n";
       time::Span elapsed_time1(time::getWallTime() - stTime);
@@ -1410,7 +1410,7 @@ void master(int argc, char **argv, char **envp) {
   while(wListIt != workList.end() && currRank<num_cores) {
     std::cout << "Starting worker: "<<currRank<<"\n";
     masterLog << "MASTER->WORKER: START_WORK ID:"<<currRank<<"\n";
-    MPI_Send(&((*wListIt)[0]), (*wListIt).size(), MPI_CHAR, currRank, START_PREFIX_TASK, MPI_COMM_WORLD);
+    MPI_Send(&((workList[0])[0]), workList[0].size(), MPI_CHAR, currRank, START_PREFIX_TASK, MPI_COMM_WORLD);
     busyList.push_back(currRank);
     wListIt = workList.erase(wListIt);
     ++currRank;
@@ -1568,6 +1568,13 @@ void master(int argc, char **argv, char **envp) {
         for(int x=2; x<num_cores; ++x) {
           MPI_Send(&dummy, 1, MPI_CHAR, x, KILL, MPI_COMM_WORLD);
         }
+        
+        for(int x=2; x<num_cores; ++x) {
+            MPI_Recv(&dummy, 1, MPI_CHAR, x, KILL_COMP, MPI_COMM_WORLD, &status2);
+        }
+        masterLog.close();
+        MPI_Abort(MPI_COMM_WORLD, -1);
+
       } else if(status.MPI_TAG == READY_TO_OFFLOAD) {
         //masterLog << "WORKER->MASTER: READY TO OFFLOAD:"<<status.MPI_SOURCE<<"\n";
         offloadReadyList.push_back(status.MPI_SOURCE);
@@ -1659,7 +1666,7 @@ void slave(int argc, char **argv, char **envp) {
   int world_rank;
   MPI_Status status;
   char result;
-  std::deque<std::string> dummyworkList;
+  std::deque<std::vector<unsigned char>> dummyworkList;
   MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
   while(true) {
     //trying to check the TAG of incoming message
@@ -1680,6 +1687,10 @@ void slave(int argc, char **argv, char **envp) {
       recvTest.resize(count);
       MPI_Recv(&recvTest[0], count, MPI_CHAR, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
       std::cout << "Process: "<<world_rank<<" Prefix Task: Length:"<<count<<"\n";
+      for(auto it:recvTest) {
+        std::cout << it;
+      }
+      std::cout << "\n";
       launchKleeInstance(world_rank, argc, argv, envp, 
         dummyworkList, recvTest, phase2Depth, PREFIX_MODE, getNewSearch());
       std::cout << "Cleanup Complete: " << world_rank << "\n";
@@ -1710,7 +1721,7 @@ void slave(int argc, char **argv, char **envp) {
 }
 
 int launchKleeInstance(int x, int argc, char **argv, char **envp,
-    std::deque<std::string> &workList,
+    std::deque<std::vector<unsigned char>> &workList,
     std::vector<unsigned char> &prefix, 
     int explorationDepth, int mode, std::string searchMode) {
 
@@ -1954,7 +1965,7 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
 			std::string pktest(prefix.begin(), prefix.end());
 			std::cout << "Prefixed Received: "<<pktest<<"\n";
 
-			char *pch;
+			/*char *pch;
 			pch = strtok(&pktest[0], ",");
 			int count = 0;
 			while(pch!=NULL) {
@@ -1973,7 +1984,57 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
 				++count;
 				pch = strtok(NULL, ",");
 			}
-    } 
+    }*/
+
+      int depthLoc = 0;
+      int testLoc = 0;
+      int count = prefix.size();
+      for(int x=count-1; x>=0; x--) {
+        if(prefix[x] == ',') {
+          depthLoc = x+1;
+          testLoc = x;
+          break;
+        }
+      }
+
+      assert(depthLoc != 0);
+      assert(testLoc != 0);
+
+      char depthArr[count-depthLoc];
+      char testArr[testLoc];
+
+      for(int x=12; x<count; x++) {
+          depthArr[x-12] = prefix[x];
+      }
+
+      assert(prefix[11] == ',');
+
+      for(int x=0; x<11; x++) {
+        testArr[x] = prefix[x];
+      }
+
+      std::string tStrDepth(depthArr);
+      interpreter->setTestPrefixDepth(std::stoi(tStrDepth));
+
+      KTest* out = new KTest();
+      out->numArgs = 0;
+      out->symArgvs = 0;
+      out->symArgvLen = 0;
+      out->numObjects = 1;
+      out->objects = new KTestObject[out->numObjects];
+      assert(out->objects);
+      for(unsigned int i=0; i<out->numObjects; i++) {
+        KTestObject *o = &(out->objects[i]);
+        o->name = (char*)"arg00";
+        o->numBytes = 11;
+        o->bytes = new unsigned char[o->numBytes];
+        assert(o->bytes);
+        std::copy(testArr, testArr+11, o->bytes);
+      }
+      std::string someName = "someName";
+      interpreter->setPrefixKTest(out, someName);
+    }
+
 
     if(ErrorLocation != "none") {
       std::string fname;
