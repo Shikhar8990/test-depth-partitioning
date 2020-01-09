@@ -1262,8 +1262,8 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
         logFile << "Suspending False Branch State: "<<falseState<<"\n";
         printStatePath(*falseState, logFile, "Suspended State Path:");
         logFile.flush();
-        std::cout << "Suspending False Branch State"<<coreId<<" "<<outputDir<<"\n";
-        std::cout.flush();
+        //std::cout << "Suspending False Branch State"<<coreId<<" "<<outputDir<<"\n";
+        //std::cout.flush();
         //ref<Expr> ff = Expr::createIsZero(condition);
         //ff->dump();
         //std::cout.flush();
@@ -1306,10 +1306,10 @@ Executor::fork(ExecutionState &current, ref<Expr> condition, bool isInternal) {
 
       if(ENABLE_LOGGING) {
         logFile << "Suspending True Branch State "<<trueState<<"\n";
-        std::cout << "Suspending True Branch State"<<coreId<<" "<<outputDir<<"\n";
+        //std::cout << "Suspending True Branch State"<<coreId<<" "<<outputDir<<"\n";
         printStatePath(*trueState, logFile, "Suspended State Path:");
         logFile.flush();
-        std::cout.flush();
+        //std::cout.flush();
       }
 
       rangingSuspendedStates.push_back(trueState);
@@ -3074,43 +3074,19 @@ void Executor::check2Offload(ExecutionState *current) {
       }
 
       if(valid) { 
-        //create a test from the test
-        /*unsigned tId = interpreterHandler->processTestCase(*state2Remove, "offload", "offload", true);
-        std::stringstream filename;
-        filename << "test" << std::setfill('0') << std::setw(6) << tId << ".ktest";
-        std::string testName = outputDir+"/"+filename.str()+","+std::to_string((*state2Remove).depth);
-        std::vector<char> pkt2Send(testName.begin(), testName.end());
-        if(ENABLE_LOGGING) {
-          logFile << "Offloading: "<<state2Remove<<" Depth: "<<state2Remove->actDepth<<"\n";
-          logFile << "Packet to Send: "<<testName<<" Length:"<<pkt2Send.size()<<"\n";
-          printStatePath(*state2Remove, logFile, "Offloaded State Path:");
-          logFile.flush();
-          std::cout << "Offloading: "<<state2Remove<<" Depth: "<<state2Remove->actDepth<<"\n";
-          std::cout.flush();
-        }
-        MPI_Send(testName.c_str(), testName.length(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
-				std::vector<ExecutionState *> remStates;
-				remStates.push_back(state2Remove);
-				searcher->update(nullptr, std::vector<ExecutionState *>(), remStates);
-				auto ii = states.find(state2Remove);
-				assert(ii != states.end()); //can not be case as the state has to exist
-				states.erase(ii); //remove the state from states vector
-				rangingSuspendedStates.push_back(state2Remove);
-        auto hit = std::find(removedStates.begin(), removedStates.end(), state2Remove);
-        if(hit != removedStates.end()) {
-          removedStates.erase(hit);
-        }*/
         std::vector< std::pair<std::string, std::vector<unsigned char> > > out;
         bool success = getSymbolicSolution(*state2Remove, out);
         assert(success); //needs to be successful 
         
-        std::string tData(out[0].second.begin(), out[0].second.end());
+        std::string tData(out[1].second.begin(), out[1].second.end());
         std::string tDepth(std::to_string(state2Remove->depth));
 
         std::vector<unsigned char> newTestData;
         //newTestData.resize(tData.size()+tDepth.size() + 1);
         
-        //std::cout << "HYHY: "<<tData.size()<<"-"<<tDepth.size()<<"-"<<tData<<"-"<<tDepth<<"\n";
+        //std::cout << "HYHY3: "<<tData.size()<<"-"<<tDepth.size()<<"-"<<tData<<"-"<<tDepth<<"\n";
+				//std::cout << "HYHY4: "<<out[0].first<<" "<<out[1].first<<"\n";
+				//std::cout.flush();
         
         for(int x=0; x<tData.size(); x++) {
           newTestData.push_back(tData[x]);
@@ -3133,7 +3109,6 @@ void Executor::check2Offload(ExecutionState *current) {
         //}
         //logFile<<"\n";
 
-
         MPI_Send(&(newTestData[0]), newTestData.size(), MPI_CHAR, 0, OFFLOAD_RESP, MPI_COMM_WORLD);
 				
         std::vector<ExecutionState *> remStates;
@@ -3149,7 +3124,6 @@ void Executor::check2Offload(ExecutionState *current) {
         if(hit != removedStates.end()) {
           removedStates.erase(hit);
         }
-
       } else {
         if(ENABLE_LOGGING) {
           logFile << "Offloading\n";
@@ -3176,8 +3150,6 @@ void Executor::check2Offload(ExecutionState *current) {
 }
 
 void Executor::updateStates(ExecutionState *current) {
-
-	if(enableLB) check2Offload(current);
 
   if (searcher) {
     bool foundAlreadyRemState=false;
@@ -3243,6 +3215,7 @@ void Executor::updateStates(ExecutionState *current) {
     continuedStates.clear();
   }
   testSwitchRemovedState = NULL;
+	if(enableLB) check2Offload(current);
 }
 
 ExecutionState* Executor::offloadFromStatesVector(ExecutionState* current, bool &valid) {
@@ -3626,10 +3599,13 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
         assert(depthLoc != 0);
         assert(testLoc != 0);
 
-        char depthArr[count-depthLoc];
-        char testArr[testLoc];
+        //char depthArr[count-depthLoc];
+        //char testArr[testLoc];
 
-        for(int x=12; x<count; x++) {
+        char* depthArr = (char*)malloc((count-depthLoc)*sizeof(char));
+        char* testArr = (char*)malloc((testLoc)*sizeof(char));
+
+        /*for(int x=12; x<count; x++) {
           depthArr[x-12] = recv_prefix[x];
         }
 
@@ -3637,7 +3613,16 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
 
         for(int x=0; x<11; x++) {
           testArr[x] = recv_prefix[x];
-        }
+        }*/
+				
+				for(int x=depthLoc,y=0; x<count; x++,y++) {
+  				depthArr[y] = recv_prefix[x];
+				}
+				//depthArr[count-depthLoc] = '\0';
+
+				for(int x=0; x<testLoc; x++) {
+  				testArr[x] = recv_prefix[x];
+				}
 
         std::string tStrDepth(depthArr);
         setTestPrefixDepth(std::stoi(tStrDepth));
@@ -3651,37 +3636,14 @@ void Executor::run(ExecutionState &initialState, bool branchLevelHalt, bool path
         assert(out->objects);
         for(unsigned int i=0; i<out->numObjects; i++) {
           KTestObject *o = &(out->objects[i]);
-          o->name = "arg00";
-          o->numBytes = 11;
+          o->name = "buf";
+          o->numBytes = 32;
           o->bytes = new unsigned char[o->numBytes];
           assert(o->bytes);
-          std::copy(testArr, testArr+11, o->bytes);        
+          std::copy(testArr, testArr+32, o->bytes);        
         }
         std::string someName = "someName";
         setPrefixKTest(out, someName);
-
-      	/*char *pch;
-      	pch = strtok(&pktest[0], ",");
-      	int count1 = 0;
-        unsigned origWorker=coreId;
-      	while(pch!=NULL) {
-        	std::string ff(pch);
-        	//std::cout<<ff<<"\n";
-        	if(count1 == 0) {
-          	KTest *out = kTest_fromFile(ff.c_str());
-          	if (out) {
-            	setPrefixKTest(out, ff);
-          	} else {
-            	klee_warning("unable to open: %s\n", ff);
-          	}
-        	} else if(count1==1) {
-          	setTestPrefixDepth(std::stoi(ff));
-        	} else {
-            origWorker = std::stoi(ff);
-          }
-        	++count1;
-        	pch = strtok(NULL, ",");
-      	}*/
 
         assert(rangingSuspendedStates.size() > 0); //something should be there
         bool foundState;
@@ -3800,13 +3762,14 @@ bool Executor::addTest2WorkList(ExecutionState &state) {
     return false;
   }
   
-  std::string tData(out[0].second.begin(), out[0].second.end());
+  std::string tData(out[1].second.begin(), out[1].second.end());
   std::string tDepth(std::to_string(state.depth));
 
   std::vector<unsigned char> newTestData;
-  //wTestData.resize(tData.size()+tDepth.size() + 1);
 
   //std::cout << "HYHY: "<<tData.size()<<" "<<tDepth.size()<<" "<<tData<<" "<<tDepth<<"\n";
+  //std::cout << "HYHY1: "<<out.size()<<" "<<out[0].first<<" "<<(out[0].second).size()
+  //          <<" "<<out[1].first<<" "<<(out[1].second).size()<<"\n";
 
   for(int x=0; x<tData.size(); x++) {
     newTestData.push_back(tData[x]);

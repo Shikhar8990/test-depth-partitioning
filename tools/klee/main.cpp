@@ -1965,27 +1965,6 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
 			std::string pktest(prefix.begin(), prefix.end());
 			std::cout << "Prefixed Received: "<<pktest<<"\n";
 
-			/*char *pch;
-			pch = strtok(&pktest[0], ",");
-			int count = 0;
-			while(pch!=NULL) {
-				std::string ff(pch);
-				std::cout<<ff<<"\n";
-				if(count == 0) {
-					KTest *out = kTest_fromFile(ff.c_str());
-					if (out) {
-						interpreter->setPrefixKTest(out, ff);
-					} else {
-						klee_warning("unable to open: %s\n", ff);
-					}
-				} else {
-					interpreter->setTestPrefixDepth(std::stoi(ff));
-				}
-				++count;
-				pch = strtok(NULL, ",");
-			}
-    }*/
-
       int depthLoc = 0;
       int testLoc = 0;
       int count = prefix.size();
@@ -2000,20 +1979,27 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
       assert(depthLoc != 0);
       assert(testLoc != 0);
 
-      char depthArr[count-depthLoc];
-      char testArr[testLoc];
+      //char depthArr[count-depthLoc];
+      //char testArr[testLoc];
 
-      for(int x=12; x<count; x++) {
-          depthArr[x-12] = prefix[x];
+      char* depthArr = (char*)malloc((count-depthLoc)*sizeof(char));
+      char* testArr = (char*)malloc((testLoc)*sizeof(char));
+
+      for(int x=depthLoc,y=0; x<count; x++,y++) {
+        depthArr[y] = prefix[x];
       }
+      //depthArr[count-depthLoc] = '\0';
 
-      assert(prefix[11] == ',');
-
-      for(int x=0; x<11; x++) {
+      for(int x=0; x<testLoc; x++) {
         testArr[x] = prefix[x];
       }
 
       std::string tStrDepth(depthArr);
+      //std::string tData(testArr);
+      //std::cout << "HAHA: "<<tStrDepth<<"\n";
+      //std::cout.flush();
+      //assert(prefix[11] == ',');
+
       interpreter->setTestPrefixDepth(std::stoi(tStrDepth));
 
       KTest* out = new KTest();
@@ -2022,17 +2008,15 @@ int launchKleeInstance(int x, int argc, char **argv, char **envp,
       out->symArgvLen = 0;
       out->numObjects = 1;
       out->objects = new KTestObject[out->numObjects];
-      assert(out->objects);
-      for(unsigned int i=0; i<out->numObjects; i++) {
-        KTestObject *o = &(out->objects[i]);
-        o->name = (char*)"arg00";
-        o->numBytes = 11;
-        o->bytes = new unsigned char[o->numBytes];
-        assert(o->bytes);
-        std::copy(testArr, testArr+11, o->bytes);
-      }
+      KTestObject *o1 = &(out->objects[0]);
+      o1->name = (char*)"buf";
+      o1->numBytes = 32;
+      o1->bytes = new unsigned char[o1->numBytes];
+      assert(o1->bytes);
+      std::copy(testArr, testArr+32, o1->bytes);
       std::string someName = "someName";
       interpreter->setPrefixKTest(out, someName);
+      assert(o1->bytes);
     }
 
 
